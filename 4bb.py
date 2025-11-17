@@ -144,6 +144,14 @@ class FourBBXYApp(ctk.CTk):
 
         self.title(APP_NAME)
         self.geometry("780x480")
+        
+        # <<< YENİ >>> İkonu buradan ayarlıyorsun (Doğru yapmışsın!)
+        try:
+            self.iconbitmap("icon.ico")
+        except Exception as e:
+            print(f"İkon yüklenemedi: {e}") 
+            # İkon olmasa bile program çalışmaya devam eder.
+
         self.minsize(700, 440)
         self.configure(fg_color=PALETTE["bg"])
 
@@ -172,7 +180,7 @@ class FourBBXYApp(ctk.CTk):
         self.my_note_entry.pack(fill="x", padx=12, pady=(5,5))
         self.my_note_entry.bind("<Return>", self.save_note_and_publish)
 
-        self.partner_note_label = ctk.CTkLabel(top_frame, text="Partner : " + self.settings.get("partner_note"),
+        self.partner_note_label = ctk.CTkLabel(top_frame, text="Partner: " + self.settings.get("partner_note"),
                                       wraplength=680, justify="left",
                                       font=ctk.CTkFont(size=12, slant="italic"),
                                       text_color="#555", anchor="w")
@@ -237,12 +245,6 @@ class FourBBXYApp(ctk.CTk):
 
         # <<< DEĞİŞTİ >>> sound_frame ve içindekiler kaldırıldı.
         # <<< DEĞİŞTİ >>> Senkronize Et butonu kaldırıldı.
-        
-        # Sadece boşluk olması için bir çerçeve bırakabiliriz (veya tamamen kaldırabiliriz)
-        # Şimdilik tamamen kaldırıyorum, sağ taraf biraz daha sıkışık olacak.
-        # refresh_row = ctk.CTkFrame(right, fg_color="white")
-        # refresh_row.pack(fill="x", padx=6, pady=8)
-
 
         footer = ctk.CTkFrame(self, fg_color=PALETTE["bg"])
         footer.pack(fill="x", padx=20, pady=(6,20))
@@ -255,8 +257,6 @@ class FourBBXYApp(ctk.CTk):
         self._update_partner_display()
 
         # <<< DEĞİŞTİ >>> Ses kontrolü kaldırıldı
-        # if self.sound_var.get():
-        #     self.toggle_sound()
 
         # Otomatik döngüleri başlat
         self.auto_fetch_partner()
