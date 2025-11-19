@@ -1,6 +1,5 @@
-# 4bbxy - updated stable version (Müzik özelliği kaldırıldı)
-# Requirements:
-#   pip install customtkinter requests
+# 4bbxy - V3.3 (Pastel Themes, Fast Sync, New Defaults)
+# Requirements: pip install customtkinter requests
 
 import os
 import json
@@ -9,69 +8,75 @@ import time
 from datetime import date, datetime
 import requests
 
-# UI lib
 try:
     import customtkinter as ctk
 except Exception:
-    raise SystemExit("customtkinter not installed. Install with: pip install customtkinter")
-
-# <<< DEĞİŞTİ >>> Pygame ve ses ile ilgili her şey kaldırıldı.
+    raise SystemExit("customtkinter not installed.")
 
 # -------------------------
 SETTINGS_FILE = "4bbxy_settings.json"
 APP_NAME = "4bbxy"
 
-PALETTE = {
-    "bg": "#F7F8FB",
-    "card": "#F9EAF1",
-    "accent": "#B7D3DF",
-    "muted": "#E4D9FF",
-    "text": "#2E2E2E",
-    "success": "#9FD5B8"
+# --- YENİ PASTEL VE GENİŞLETİLMİŞ TEMALAR ---
+THEMES = {
+    "Varsayılan (Mavi)":   {"bg": "#F7F8FB", "card": "#F0F4F8", "accent": "#D1E8FF", "text": "#2C3E50", "btn": "#5DADE2", "btn_hover": "#3498DB"},
+    "Aşk (Pastel Pembe)":  {"bg": "#FFF0F5", "card": "#FFF5F7", "accent": "#FFD1DC", "text": "#6D4C41", "btn": "#FFB7C5", "btn_hover": "#FF9EAE"}, # Çok daha yumuşak pembe
+    "Lavanta (Mor)":       {"bg": "#F3E5F5", "card": "#F8F0FB", "accent": "#E1BEE7", "text": "#4A148C", "btn": "#BA68C8", "btn_hover": "#AB47BC"},
+    "Nane (Yeşil)":        {"bg": "#E0F2F1", "card": "#E8F5E9", "accent": "#B9F6CA", "text": "#004D40", "btn": "#66BB6A", "btn_hover": "#43A047"},
+    "Kahve (Toprak)":      {"bg": "#EFEBE9", "card": "#F5F5F5", "accent": "#D7CCC8", "text": "#3E2723", "btn": "#8D6E63", "btn_hover": "#6D4C41"},
+    "Gece (Koyu)":         {"bg": "#212121", "card": "#303030", "accent": "#424242", "text": "#E0E0E0", "btn": "#424242", "btn_hover": "#616161"},
+    "Okyanus (Turkuaz)":   {"bg": "#E0F7FA", "card": "#E0FFFF", "accent": "#80DEEA", "text": "#006064", "btn": "#4DD0E1", "btn_hover": "#26C6DA"},
 }
 
-# -------------------------
 DEFAULT_SETTINGS = {
     "daily_target_minutes": 120,
     "today_seconds": 0,
-    "hearts": 0,
-    # <<< DEĞİŞTİ >>> "sound_on": False, kaldırıldı
+    "hearts": 0,           
+    "total_hearts_ever": 0, 
     "last_heart_date": None,
-    "share_publish_url": "",   # Kendi verilerini yayınlama URL'si (npoint.io)
-    "partner_fetch_url": "",   # Partner verilerini çekme URL'si (npoint.io)
+    
+    # Sync URLs
+    "share_publish_url": "",
+    "partner_fetch_url": "",
+    
+    # Partner Data
     "partner_today_seconds": 0,
     "partner_hearts": 0,
+    "partner_total_hearts": 0,
     "partner_daily_target_minutes": 120,
-    "my_note": "Notunuzu buraya yazın ve Enter'a basın...",
-    "partner_note": "Partnerin notu..." 
+    # <<< DEĞİŞTİ >>> Varsayılan not metni güncellendi
+    "my_note": "Notunu göndermek için buraya gir.",
+    "partner_note": "...",
+    
+    "theme_name": "Varsayılan (Mavi)",
+    "incoming_action": "", 
+    "last_action_id": ""
 }
 
-MIN_TARGET_MINUTES = 120   # enforce minimum
+MIN_TARGET_MINUTES = 120
+HEART_EARN_RATE_SECONDS = 1800 
 
 def load_settings():
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 s = json.load(f)
-            # fill defaults
             for k, v in DEFAULT_SETTINGS.items():
                 if k not in s:
                     s[k] = v
-            # reset today's seconds if date changed
+            
             saved_date = s.get("saved_date")
             if saved_date != date.today().isoformat():
                 s["today_seconds"] = 0
                 s["saved_date"] = date.today().isoformat()
-                s["target_reached_today"] = False
                 s["partner_today_seconds"] = 0
                 save_settings(s)
             return s
-        except Exception:
+        except:
             return DEFAULT_SETTINGS.copy()
     else:
         s = DEFAULT_SETTINGS.copy()
         s["saved_date"] = date.today().isoformat()
-        s["target_reached_today"] = False
         save_settings(s)
         return s
 
@@ -80,12 +85,9 @@ def save_settings(settings):
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("Failed to save settings:", e)
+        print("Save error:", e)
 
 # -------------------------
-# <<< DEĞİŞTİ >>> AmbientPlayer sınıfı kaldırıldı.
-# -------------------------
-
 class StudyTimer:
     def __init__(self, initial_seconds=0, on_tick_callback=None):
         self._running = False
@@ -95,16 +97,14 @@ class StudyTimer:
         self.on_tick = on_tick_callback
 
     def start(self):
-        if self._running:
-            return
+        if self._running: return
         self._running = True
         self._start_time = time.time()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self):
-        if not self._running:
-            return 0
+        if not self._running: return 0
         self._running = False
         elapsed = int(time.time() - self._start_time)
         self._accum_seconds += elapsed
@@ -112,7 +112,6 @@ class StudyTimer:
         return elapsed
 
     def get_current_live_seconds(self):
-        """Zamanlayıcı çalışıyorsa o anki saniyeyi, çalışmıyorsa birikmiş saniyeyi döndürür."""
         if self._running and self._start_time is not None:
             return int(time.time() - self._start_time) + self._accum_seconds
         return self._accum_seconds
@@ -121,232 +120,233 @@ class StudyTimer:
         while self._running:
             elapsed = int(time.time() - self._start_time) + self._accum_seconds
             if self.on_tick:
-                try:
-                    self.on_tick(elapsed)
-                except Exception:
-                    pass
+                try: self.on_tick(elapsed)
+                except: pass
             time.sleep(1)
-
-    def reset_accum(self):
-        self._accum_seconds = 0
-        self._start_time = None
-        self._running = False
 
 # -------------------------
 class FourBBXYApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-
         self.settings = load_settings()
-
-        ctk.set_appearance_mode("Light")
-        ctk.set_default_color_theme("blue")   # safe default
-
-        self.title(APP_NAME)
-        self.geometry("780x480")
         
-        # <<< YENİ >>> İkonu buradan ayarlıyorsun (Doğru yapmışsın!)
-        try:
-            self.iconbitmap("icon.ico")
-        except Exception as e:
-            print(f"İkon yüklenemedi: {e}") 
-            # İkon olmasa bile program çalışmaya devam eder.
+        # Tema Yükleme
+        self.current_theme = THEMES.get(self.settings.get("theme_name"), THEMES["Varsayılan (Mavi)"])
+        
+        ctk.set_appearance_mode("Light")
+        self.title(APP_NAME)
+        self.geometry("800x550")
+        self.minsize(750, 500)
+        
+        try: self.iconbitmap("icon.ico")
+        except: pass
 
-        self.minsize(700, 440)
-        self.configure(fg_color=PALETTE["bg"])
+        self.configure(fg_color=self.current_theme["bg"])
 
-        # --- top frame
-        top_frame = ctk.CTkFrame(self, corner_radius=12, fg_color=PALETTE["card"])
-        top_frame.pack(padx=20, pady=(20,10), fill="x")
+        # --- TABS ---
+        self.tabview = ctk.CTkTabview(self, width=760, height=500, fg_color=self.current_theme["card"],
+                                      segmented_button_fg_color=self.current_theme["bg"],
+                                      segmented_button_unselected_color=self.current_theme["bg"],
+                                      text_color=self.current_theme["text"])
+        self.tabview.pack(padx=20, pady=20, fill="both", expand=True)
+        
+        self.tab_home = self.tabview.add("Ana Sayfa")
+        self.tab_shop = self.tabview.add("Yarışma & Market")
+        self.tab_settings = self.tabview.add("Ayarlar")
 
-        title_row = ctk.CTkFrame(top_frame, fg_color=PALETTE["card"])
-        title_row.pack(fill="x", padx=12, pady=(12,6))
-        self.lbl_app = ctk.CTkLabel(title_row, text=APP_NAME, font=ctk.CTkFont(size=20, weight="bold"))
-        self.lbl_app.pack(side="left")
+        self.tabview.configure(segmented_button_selected_color=self.current_theme["btn"])
+        self.tabview.configure(segmented_button_selected_hover_color=self.current_theme["btn_hover"])
 
-        hearts_frame = ctk.CTkFrame(title_row, fg_color="transparent")
-        hearts_frame.pack(side="right")
-        ctk.CTkLabel(hearts_frame, text="Sen:", font=ctk.CTkFont(size=14)).pack(side="left")
-        self.lbl_hearts = ctk.CTkLabel(hearts_frame, text="♥ " + str(self.settings.get("hearts",0)),
-                                       font=ctk.CTkFont(size=16, weight="bold"), text_color="#E74C3C")
-        self.lbl_hearts.pack(side="left")
-        ctk.CTkLabel(hearts_frame, text=" | Partner:", font=ctk.CTkFont(size=14)).pack(side="left", padx=(10,0))
-        self.lbl_partner_hearts = ctk.CTkLabel(hearts_frame, text="♥ " + str(self.settings.get("partner_hearts",0)),
-                                       font=ctk.CTkFont(size=16, weight="bold"), text_color="#E67E22")
-        self.lbl_partner_hearts.pack(side="left")
+        self.setup_home_tab()
+        self.setup_shop_tab()
+        self.setup_settings_tab()
 
-        self.my_note_var = ctk.StringVar(value=self.settings.get("my_note"))
-        self.my_note_entry = ctk.CTkEntry(top_frame, textvariable=self.my_note_var, font=ctk.CTkFont(size=14))
-        self.my_note_entry.pack(fill="x", padx=12, pady=(5,5))
-        self.my_note_entry.bind("<Return>", self.save_note_and_publish)
-
-        self.partner_note_label = ctk.CTkLabel(top_frame, text="Partner: " + self.settings.get("partner_note"),
-                                      wraplength=680, justify="left",
-                                      font=ctk.CTkFont(size=12, slant="italic"),
-                                      text_color="#555", anchor="w")
-        self.partner_note_label.pack(fill="x", padx=12, pady=(0,12))
-
-        # --- middle
-        mid_frame = ctk.CTkFrame(self, corner_radius=12, fg_color="white")
-        mid_frame.pack(padx=20, pady=6, fill="both", expand=True)
-
-        left = ctk.CTkFrame(mid_frame, fg_color="white")
-        left.pack(side="left", fill="both", expand=True, padx=12, pady=12)
-
-        self.time_var = ctk.StringVar(value="00:00:00")
-        time_display = ctk.CTkLabel(left, textvariable=self.time_var, font=ctk.CTkFont(size=36, weight="bold"))
-        time_display.pack(pady=(10,8))
-
-        target_row = ctk.CTkFrame(left, fg_color="white")
-        target_row.pack(pady=(6,10), fill="x", padx=8)
-        ctk.CTkLabel(target_row, text="Günlük hedef (dakika):").pack(side="left")
-        self.target_var = ctk.IntVar(value=self.settings.get("daily_target_minutes", DEFAULT_SETTINGS["daily_target_minutes"]))
-        self.target_entry = ctk.CTkEntry(target_row, width=80, textvariable=self.target_var)
-        self.target_entry.pack(side="left", padx=8)
-        save_target_btn = ctk.CTkButton(target_row, text="Kaydet", width=80, command=self.save_target)
-        save_target_btn.pack(side="left")
-
-        self.target_error_label = ctk.CTkLabel(left, text=f"Günlük hedef minimum {MIN_TARGET_MINUTES} dakikadır.",
-                                                text_color="red", font=ctk.CTkFont(size=12))
-
-        ctrl_frame = ctk.CTkFrame(left, fg_color="white")
-        ctrl_frame.pack(pady=8)
-        self.start_btn = ctk.CTkButton(ctrl_frame, text="Start", width=120, command=self.start_timer)
-        self.start_btn.grid(row=0, column=0, padx=6, pady=6)
-        self.stop_btn = ctk.CTkButton(ctrl_frame, text="Stop", width=120, command=self.stop_timer, state="disabled")
-        self.stop_btn.grid(row=0, column=1, padx=6, pady=6)
-
-        progress_label = ctk.CTkLabel(left, text="Günlük ilerleme (Sen)")
-        progress_label.pack(pady=(8,4))
-        self.progress = ctk.CTkProgressBar(left, width=420)
-        self.progress.set(0.0)
-        self.progress.pack(pady=(0,12))
-        self.progress_text = ctk.CTkLabel(left, text=self._progress_text())
-        self.progress_text.pack()
-
-        right = ctk.CTkFrame(mid_frame, fg_color="white")
-        right.pack(side="right", fill="both", expand=True, padx=12, pady=12)
-
-        reward_card = ctk.CTkFrame(right, fg_color=PALETTE["muted"], corner_radius=10)
-        reward_card.pack(fill="x", padx=6, pady=6)
-        ctk.CTkLabel(reward_card, text="Kalp Ödülleri (Sen)", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(8,0))
-        self.reward_text = ctk.CTkLabel(reward_card, text=self._reward_text(), wraplength=260)
-        self.reward_text.pack(pady=(6,12))
-
-        partner_card = ctk.CTkFrame(right, fg_color=PALETTE["accent"], corner_radius=10)
-        partner_card.pack(fill="x", padx=6, pady=6)
-        ctk.CTkLabel(partner_card, text="Partnerin İlerlemesi", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(8,0))
-
-        self.partner_progress = ctk.CTkProgressBar(partner_card, width=240, progress_color="#E67E22")
-        self.partner_progress.set(0.0)
-        self.partner_progress.pack(pady=(8,4))
-        self.partner_progress_text = ctk.CTkLabel(partner_card, text=self._partner_progress_text(), wraplength=260)
-        self.partner_progress_text.pack(pady=(0,12))
-
-        # <<< DEĞİŞTİ >>> sound_frame ve içindekiler kaldırıldı.
-        # <<< DEĞİŞTİ >>> Senkronize Et butonu kaldırıldı.
-
-        footer = ctk.CTkFrame(self, fg_color=PALETTE["bg"])
-        footer.pack(fill="x", padx=20, pady=(6,20))
-        ctk.CTkLabel(footer, text="4bbxy — made with love by soran", font=ctk.CTkFont(size=11)).pack(side="left")
-
-        # timer with persisted initial seconds
         self.timer = StudyTimer(initial_seconds=self.settings.get("today_seconds", 0), on_tick_callback=self._on_tick)
         self._update_time_display(self.settings.get("today_seconds", 0))
-        self._update_progress(self.settings.get("today_seconds", 0))
-        self._update_partner_display()
+        self._update_progress_bars(self.settings.get("today_seconds", 0))
 
-        # <<< DEĞİŞTİ >>> Ses kontrolü kaldırıldı
-
-        # Otomatik döngüleri başlat
         self.auto_fetch_partner()
         self.auto_publish()
-
+        
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # helpers
-    def _progress_text(self):
-        minutes = self.settings.get("daily_target_minutes", DEFAULT_SETTINGS["daily_target_minutes"])
-        done_min = int(self.settings.get("today_seconds", 0) / 60)
-        return f"{done_min} / {minutes} dakika"
+    # ---------------------------------------------------------
+    # TAB 1: ANA SAYFA
+    # ---------------------------------------------------------
+    def setup_home_tab(self):
+        top_frame = ctk.CTkFrame(self.tab_home, fg_color="transparent")
+        top_frame.pack(fill="x", padx=10, pady=10)
 
-    def _partner_progress_text(self):
-        minutes = self.settings.get("partner_daily_target_minutes", DEFAULT_SETTINGS["daily_target_minutes"])
-        done_min = int(self.settings.get("partner_today_seconds", 0) / 60)
-        return f"{done_min} / {minutes} dakika"
+        self.my_note_var = ctk.StringVar(value=self.settings.get("my_note"))
+        self.my_note_entry = ctk.CTkEntry(top_frame, textvariable=self.my_note_var, font=ctk.CTkFont(size=14), 
+                                          fg_color="white", text_color="black", border_color=self.current_theme["accent"])
+        self.my_note_entry.pack(fill="x", pady=(0,5))
+        self.my_note_entry.bind("<Return>", self.save_note_and_publish)
+        # İlk tıklandığında varsayılan yazıyı silmek için (opsiyonel ama hoş)
+        self.my_note_entry.bind("<FocusIn>", self.clear_placeholder)
 
-    def _reward_text(self):
-        hearts = self.settings.get("hearts", 0)
-        return f"{hearts} kalp topladınız.\nGünde en fazla 1 kalp alabilirsiniz. 💗"
+        self.partner_note_label = ctk.CTkLabel(top_frame, text="Partner: " + self.settings.get("partner_note"),
+                                      font=ctk.CTkFont(size=12, slant="italic"), text_color=self.current_theme["text"], anchor="w")
+        self.partner_note_label.pack(fill="x")
 
-    def _update_time_display(self, total_seconds):
-        h = total_seconds // 3600
-        m = (total_seconds % 3600) // 60
-        s = total_seconds % 60
-        self.time_var.set(f"{h:02d}:{m:02d}:{s:02d}")
+        mid_frame = ctk.CTkFrame(self.tab_home, fg_color="white", corner_radius=15)
+        mid_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-    def _update_progress(self, total_seconds):
-        target_minutes = max(MIN_TARGET_MINUTES, int(self.settings.get("daily_target_minutes", DEFAULT_SETTINGS["daily_target_minutes"])))
-        target_seconds = target_minutes * 60
-        ratio = min(1.0, total_seconds / target_seconds) if target_seconds > 0 else 0.0
-        self.progress.set(ratio)
-        self.progress_text.configure(text=self._progress_text())
+        self.time_var = ctk.StringVar(value="00:00:00")
+        self.lbl_timer = ctk.CTkLabel(mid_frame, textvariable=self.time_var, font=ctk.CTkFont(size=60, weight="bold"), text_color=self.current_theme["text"])
+        self.lbl_timer.pack(pady=(30, 10))
 
-        # award one heart per day
-        today_iso = date.today().isoformat()
-        if ratio >= 1.0 and self.settings.get("last_heart_date") != today_iso:
-            self.settings["hearts"] = self.settings.get("hearts", 0) + 1
-            self.settings["last_heart_date"] = today_iso
+        btn_frame = ctk.CTkFrame(mid_frame, fg_color="transparent")
+        btn_frame.pack(pady=10)
+        
+        self.start_btn = ctk.CTkButton(btn_frame, text="BAŞLA", width=140, height=40, 
+                                       fg_color=self.current_theme["btn"], hover_color=self.current_theme["btn_hover"],
+                                       command=self.start_timer)
+        self.start_btn.grid(row=0, column=0, padx=10)
+        
+        self.stop_btn = ctk.CTkButton(btn_frame, text="DURAKLAT", width=140, height=40, state="disabled",
+                                      fg_color="#E74C3C", hover_color="#C0392B",
+                                      command=self.stop_timer)
+        self.stop_btn.grid(row=0, column=1, padx=10)
+
+        progress_container = ctk.CTkFrame(mid_frame, fg_color="transparent")
+        progress_container.pack(fill="x", padx=20, pady=30)
+
+        left_prog = ctk.CTkFrame(progress_container, fg_color="transparent")
+        left_prog.pack(side="left", fill="x", expand=True, padx=10)
+        ctk.CTkLabel(left_prog, text="Senin İlerlemen", text_color=self.current_theme["text"]).pack(anchor="w")
+        self.progress = ctk.CTkProgressBar(left_prog, height=15, progress_color=self.current_theme["btn"])
+        self.progress.set(0)
+        self.progress.pack(fill="x", pady=5)
+        self.progress_text = ctk.CTkLabel(left_prog, text="0 / 120 dk", text_color="gray")
+        self.progress_text.pack(anchor="w")
+
+        right_prog = ctk.CTkFrame(progress_container, fg_color="transparent")
+        right_prog.pack(side="right", fill="x", expand=True, padx=10)
+        ctk.CTkLabel(right_prog, text="Partnerin İlerlemesi", text_color=self.current_theme["text"]).pack(anchor="w")
+        self.partner_progress = ctk.CTkProgressBar(right_prog, height=15, progress_color="#E67E22")
+        self.partner_progress.set(0)
+        self.partner_progress.pack(fill="x", pady=5)
+        self.partner_progress_text = ctk.CTkLabel(right_prog, text="0 / 120 dk", text_color="gray")
+        self.partner_progress_text.pack(anchor="w")
+
+    # ---------------------------------------------------------
+    # TAB 2: YARIŞMA & MARKET
+    # ---------------------------------------------------------
+    def setup_shop_tab(self):
+        score_frame = ctk.CTkFrame(self.tab_shop, fg_color="white", corner_radius=10)
+        score_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(score_frame, text="🏆 Liderlik Tablosu (Toplam Kalp) 🏆", font=ctk.CTkFont(weight="bold", size=16), text_color=self.current_theme["text"]).pack(pady=10)
+        
+        score_grid = ctk.CTkFrame(score_frame, fg_color="transparent")
+        score_grid.pack(fill="x", padx=20, pady=(0,20))
+
+        self.lbl_my_total = ctk.CTkLabel(score_grid, text=f"SEN: {self.settings.get('total_hearts_ever', 0)}", font=ctk.CTkFont(size=20, weight="bold"), text_color=self.current_theme["btn"])
+        self.lbl_my_total.pack(side="left", expand=True)
+        
+        ctk.CTkLabel(score_grid, text="VS", font=ctk.CTkFont(size=14, slant="italic"), text_color="gray").pack(side="left", padx=10)
+        
+        self.lbl_partner_total = ctk.CTkLabel(score_grid, text=f"PARTNER: {self.settings.get('partner_total_hearts', 0)}", font=ctk.CTkFont(size=20, weight="bold"), text_color="#E67E22")
+        self.lbl_partner_total.pack(side="right", expand=True)
+
+        market_frame = ctk.CTkFrame(self.tab_shop, fg_color="transparent")
+        market_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        wallet_frame = ctk.CTkFrame(market_frame, fg_color=self.current_theme["accent"])
+        wallet_frame.pack(fill="x", pady=(0,10))
+        self.lbl_wallet = ctk.CTkLabel(wallet_frame, text=f"💰 Harcanabilir Kalplerin: {self.settings.get('hearts', 0)}", font=ctk.CTkFont(size=16, weight="bold"), text_color=self.current_theme["text"])
+        self.lbl_wallet.pack(pady=10)
+        
+        ctk.CTkLabel(market_frame, text="✨ Partnerine Etkileşim Gönder ✨", font=ctk.CTkFont(size=14), text_color=self.current_theme["text"]).pack(pady=5)
+        
+        items = [
+            ("👋 Selam Gönder", 2, "partnerine selam gönderdi!"),
+            ("💋 Öpücük Gönder", 5, "sana kocaman bir öpücük gönderdi! Muah!"),
+            ("☕ Kahve Ismarla", 8, "sana sanal bir kahve gönderdi. Mola ver!"),
+            ("🎉 Konfeti Patlat", 12, "başarını kutluyor! Harikasın!"),
+            ("⚠️ Çalış Uyarısı", 15, "DERSİNE DÖN! Gözüm üzerinde!")
+        ]
+        
+        for name, cost, effect_msg in items:
+            item_btn = ctk.CTkButton(market_frame, text=f"{name} ({cost} Kalp)", 
+                                     fg_color="white", text_color="black", border_color=self.current_theme["btn"], border_width=2,
+                                     hover_color="#EEE",
+                                     command=lambda c=cost, m=effect_msg: self.buy_item(c, m))
+            item_btn.pack(fill="x", pady=4, padx=20)
+            
+        ctk.CTkLabel(market_frame, text="* Her 30 dk çalışma = 1 Kalp", font=ctk.CTkFont(size=10), text_color="gray").pack(side="bottom", pady=10)
+
+    # ---------------------------------------------------------
+    # TAB 3: AYARLAR
+    # ---------------------------------------------------------
+    def setup_settings_tab(self):
+        set_frame = ctk.CTkFrame(self.tab_settings, fg_color="white")
+        set_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        ctk.CTkLabel(set_frame, text="Günlük Hedef (Dakika)", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(20,5))
+        
+        target_frame = ctk.CTkFrame(set_frame, fg_color="transparent")
+        target_frame.pack()
+        self.target_var = ctk.IntVar(value=self.settings.get("daily_target_minutes", 120))
+        ctk.CTkEntry(target_frame, textvariable=self.target_var, width=80, justify="center").pack(side="left", padx=5)
+        ctk.CTkButton(target_frame, text="Kaydet", width=80, fg_color=self.current_theme["btn"], command=self.save_target).pack(side="left", padx=5)
+
+        ctk.CTkLabel(set_frame, text="Tema Seçimi", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(30,5))
+        self.theme_var = ctk.StringVar(value=self.settings.get("theme_name", "Varsayılan (Mavi)"))
+        
+        theme_menu = ctk.CTkOptionMenu(set_frame, variable=self.theme_var, values=list(THEMES.keys()),
+                                       fg_color=self.current_theme["btn"], button_color=self.current_theme["btn_hover"],
+                                       command=self.change_theme)
+        theme_menu.pack(pady=5)
+        
+        ctk.CTkLabel(set_frame, text="* Tema değişikliği için uygulamayı\nyeniden başlatman gerekebilir.", text_color="gray", font=ctk.CTkFont(size=11)).pack(pady=5)
+
+    # ---------------------------------------------------------
+    # LOGIC & ACTIONS
+    # ---------------------------------------------------------
+    def clear_placeholder(self, event):
+        if self.my_note_var.get() == "Notunu göndermek için buraya gir.":
+            self.my_note_var.set("")
+
+    def buy_item(self, cost, message):
+        current_hearts = self.settings.get("hearts", 0)
+        if current_hearts >= cost:
+            self.settings["hearts"] = current_hearts - cost
             save_settings(self.settings)
-            self.lbl_hearts.configure(text="♥ " + str(self.settings["hearts"]))
-            self.publish_stats() # Kalp kazanınca veriyi yayınla
-            try:
-                import tkinter.messagebox as mb
-                mb.showinfo("Tebrikler!", "Günlük hedef tamamlandı! 1 kalp kazandın. 💗")
-            except Exception:
-                pass
+            self.lbl_wallet.configure(text=f"💰 Harcanabilir Kalplerin: {self.settings['hearts']}")
+            self.settings["outgoing_action"] = message
+            self.settings["outgoing_action_id"] = str(time.time())
+            self.publish_stats()
+            import tkinter.messagebox as mb
+            mb.showinfo("Başarılı", f"Hediye gönderildi! ({cost} kalp harcandı)")
+        else:
+            import tkinter.messagebox as mb
+            mb.showerror("Yetersiz Bakiye", "Yeterli kalbin yok! Biraz daha ders çalışmalısın.")
 
-    def _update_partner_display(self):
-        """Partnerin ilerlemesini ve kalp sayısını arayüzde günceller."""
-        target_minutes = max(MIN_TARGET_MINUTES, int(self.settings.get("partner_daily_target_minutes", DEFAULT_SETTINGS["daily_target_minutes"])))
-        target_seconds = target_minutes * 60
-        partner_seconds = self.settings.get("partner_today_seconds", 0)
-        partner_hearts = self.settings.get("partner_hearts", 0)
-        ratio = min(1.0, partner_seconds / target_seconds) if target_seconds > 0 else 0.0
-        self.partner_progress.set(ratio)
-        self.partner_progress_text.configure(text=self._partner_progress_text())
-        self.lbl_partner_hearts.configure(text="♥ " + str(partner_hearts))
+    def change_theme(self, new_theme_name):
+        self.settings["theme_name"] = new_theme_name
+        save_settings(self.settings)
+        import tkinter.messagebox as mb
+        mb.showinfo("Tema Değişti", "Yeni temanın tam olarak uygulanması için lütfen uygulamayı kapatıp tekrar açın.")
 
-    def hide_target_error(self):
-        self.target_error_label.pack_forget()
-
-    # actions
     def save_target(self):
         try:
             val = int(self.target_var.get())
-            self.hide_target_error()
             if val < MIN_TARGET_MINUTES:
-                self.target_error_label.pack(pady=(0, 5))
-                self.after(5000, self.hide_target_error)
                 self.target_var.set(MIN_TARGET_MINUTES)
-                self.settings["daily_target_minutes"] = MIN_TARGET_MINUTES
-            else:
-                self.settings["daily_target_minutes"] = val
+                val = MIN_TARGET_MINUTES
+            self.settings["daily_target_minutes"] = val
             save_settings(self.settings)
-            self._update_progress(self.settings.get("today_seconds", 0))
-            self.publish_stats() # Yeni hedefi de yayınla
-        except Exception:
-            import tkinter.messagebox as mb
-            mb.showerror("Hata", "Lütfen geçerli bir sayı girin (dakika).")
+            self._update_progress_bars(self.timer.get_current_live_seconds())
+            self.publish_stats()
+        except:
+            pass
 
     def save_note_and_publish(self, event=None):
-        """Enter'a basıldığında notu kaydeder ve yayınlar."""
-        new_note = self.my_note_var.get()
-        self.settings["my_note"] = new_note
+        self.settings["my_note"] = self.my_note_var.get()
         save_settings(self.settings)
         self.publish_stats()
-        self.my_note_entry.configure(state="disabled")
-        self.after(1000, lambda: self.my_note_entry.configure(state="normal"))
         self.my_note_entry.master.focus()
 
     def start_timer(self):
@@ -355,137 +355,138 @@ class FourBBXYApp(ctk.CTk):
         self.stop_btn.configure(state="normal")
 
     def stop_timer(self):
-        self.timer.stop() # Zamanlayıcıyı durdurur ve _accum_seconds'i günceller
-        
+        self.timer.stop()
         final_seconds = self.timer.get_current_live_seconds()
         self.settings["today_seconds"] = final_seconds
-        
         self.settings["saved_date"] = date.today().isoformat()
         save_settings(self.settings)
-        self._update_time_display(self.settings["today_seconds"])
-        
-        # <<< DEĞİŞTİ >>> Stop'a basınca ilerlemeyi ve kalp kontrolünü yap
-        self._update_progress(self.settings["today_seconds"])
-        
+        self._update_time_display(final_seconds)
+        self._update_progress_bars(final_seconds)
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
-        
-        self.publish_stats() # Durunca son veriyi yayınla
+        self.publish_stats()
 
     def _on_tick(self, total_seconds):
         self.after(0, lambda: self._update_time_display(total_seconds))
-        pass
 
-    # <<< DEĞİŞTİ >>> toggle_sound metodu kaldırıldı.
+    def _update_time_display(self, total_seconds):
+        h = total_seconds // 3600
+        m = (total_seconds % 3600) // 60
+        s = total_seconds % 60
+        self.time_var.set(f"{h:02d}:{m:02d}:{s:02d}")
+
+    def _update_progress_bars(self, my_seconds):
+        my_target = self.settings.get("daily_target_minutes", 120)
+        my_ratio = min(1.0, my_seconds / (my_target * 60))
+        self.progress.set(my_ratio)
+        self.progress_text.configure(text=f"{int(my_seconds/60)} / {my_target} dk")
+
+        p_seconds = self.settings.get("partner_today_seconds", 0)
+        p_target = self.settings.get("partner_daily_target_minutes", 120)
+        p_ratio = min(1.0, p_seconds / (p_target * 60))
+        self.partner_progress.set(p_ratio)
+        self.partner_progress_text.configure(text=f"{int(p_seconds/60)} / {p_target} dk")
+
+        hearts_earned_today = int(my_seconds / HEART_EARN_RATE_SECONDS)
+        last_saved_hearts_today = self.settings.get("hearts_earned_today_count", 0)
+        if self.settings.get("saved_date") != date.today().isoformat():
+            last_saved_hearts_today = 0
+
+        if hearts_earned_today > last_saved_hearts_today:
+            diff = hearts_earned_today - last_saved_hearts_today
+            self.settings["hearts"] = self.settings.get("hearts", 0) + diff
+            self.settings["total_hearts_ever"] = self.settings.get("total_hearts_ever", 0) + diff
+            self.settings["hearts_earned_today_count"] = hearts_earned_today
+            save_settings(self.settings)
+            
+            self.lbl_wallet.configure(text=f"💰 Harcanabilir Kalplerin: {self.settings['hearts']}")
+            self.lbl_my_total.configure(text=f"SEN: {self.settings['total_hearts_ever']}")
+            
+            import tkinter.messagebox as mb
+            mb.showinfo("Tebrikler!", f"{diff} Kalp kazandın! Çalışmaya devam!")
+            self.publish_stats()
 
     def publish_stats(self):
-        """Kendi verilerini `share_publish_url` adresine yükler."""
         url = self.settings.get("share_publish_url")
-        if not url:
-            print("Yayınlama URL'si ayarlanmamış.")
-            return
-
+        if not url: return
         current_seconds = self.timer.get_current_live_seconds()
-
         payload = {
             "today_seconds": current_seconds, 
             "hearts": self.settings.get("hearts", 0),
+            "total_hearts": self.settings.get("total_hearts_ever", 0),
             "last_update": date.today().isoformat(),
-            "daily_target": self.settings.get("daily_target_minutes", DEFAULT_SETTINGS["daily_target_minutes"]),
-            "note": self.settings.get("my_note", "")
+            "daily_target": self.settings.get("daily_target_minutes", 120),
+            "note": self.settings.get("my_note", ""),
+            "action_msg": self.settings.get("outgoing_action", ""),
+            "action_id": self.settings.get("outgoing_action_id", "")
         }
-
         def _upload():
-            try:
-                requests.post(url, json=payload, timeout=10) 
-                print(f"Veriler yayınlandı: {current_seconds} saniye")
-            except Exception as e:
-                print(f"Veri yayınlanamadı: {e}")
-
+            try: requests.post(url, json=payload, timeout=10)
+            except: pass
         threading.Thread(target=_upload, daemon=True).start()
 
     def auto_publish(self):
-        """Her 60 saniyede bir verileri otomatik yayınlar."""
         try:
-            if self.timer._running:
-                print("Otomatik veri yayınlanıyor (canlı)...")
-                self.publish_stats()
-        except Exception as e:
-            print(f"Auto-publish hatası: {e}")
-        finally:
-            self.after(60000, self.auto_publish) 
+            if self.timer._running: self.publish_stats()
+        except: pass
+        # <<< DEĞİŞTİ >>> 10 saniyede 1 güncelleme
+        self.after(10000, self.auto_publish)
 
     def fetch_partner_stats(self, is_auto=False):
-        """Partner verilerini `partner_fetch_url` adresinden çeker."""
         url = self.settings.get("partner_fetch_url")
-        if not url:
-            if not is_auto: 
-                print("Partner URL'si ayarlanmamış.")
-                import tkinter.messagebox as mb
-                mb.showerror("Hata", "Partner URL'si ayarlanmamış.\nLütfen 4bbxy_settings.json dosyasını kontrol edin.")
-            return
+        if not url: return
 
         def _fetch():
             try:
-                cache_bust_param = f"?v={int(time.time())}"
-                resp = requests.get(url + cache_bust_param, timeout=10)
-                
+                cache_bust = f"?v={int(time.time())}"
+                resp = requests.get(url + cache_bust, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json()
-
-                    today_iso = date.today().isoformat()
-                    if data.get("last_update") == today_iso:
+                    today = date.today().isoformat()
+                    if data.get("last_update") == today:
                         self.settings["partner_today_seconds"] = data.get("today_seconds", 0)
                     else:
                         self.settings["partner_today_seconds"] = 0
                     
-                    self.settings["partner_hearts"] = data.get("hearts", 0)
-                    partner_target = data.get("daily_target", 120) 
-                    self.settings["partner_daily_target_minutes"] = max(MIN_TARGET_MINUTES, int(partner_target))
-                    partner_note = data.get("note", "Partnerin notu...")
-                    self.settings["partner_note"] = partner_note
+                    self.settings["partner_hearts"] = data.get("hearts", 0) 
+                    self.settings["partner_total_hearts"] = data.get("total_hearts", 0) 
+                    self.settings["partner_daily_target_minutes"] = data.get("daily_target", 120)
+                    self.settings["partner_note"] = data.get("note", "...")
                     
+                    incoming_id = data.get("action_id", "")
+                    incoming_msg = data.get("action_msg", "")
+                    
+                    last_seen_id = self.settings.get("last_action_id", "")
+                    if incoming_id and incoming_id != last_seen_id:
+                        self.settings["last_action_id"] = incoming_id
+                        save_settings(self.settings)
+                        self.after(0, lambda m=incoming_msg: self.show_action_popup(m))
+
                     save_settings(self.settings)
-
-                    self.after(0, self._update_partner_display)
+                    self.after(0, lambda: self._update_progress_bars(self.timer.get_current_live_seconds()))
                     self.after(0, lambda: self.partner_note_label.configure(text="Partner: " + self.settings["partner_note"]))
-                else:
-                    print(f"Partner verisi alınamadı. Durum Kodu: {resp.status_code}")
-
-            except Exception as e:
-                print(f"Partner verisi alınamadı: {e}")
-            finally:
-                pass
-
+                    self.after(0, lambda: self.lbl_partner_total.configure(text=f"PARTNER: {self.settings['partner_total_hearts']}"))
+            except: pass
         threading.Thread(target=_fetch, daemon=True).start()
 
+    def show_action_popup(self, message):
+        import tkinter.messagebox as mb
+        mb.showinfo("Partnerinden Mesaj Var! ❤️", f"Partnerin {message}")
+
     def auto_fetch_partner(self):
-        """Her 60 saniyede bir partner verilerini otomatik olarak çeker."""
-        try:
-            print("Otomatik partner verisi çekiliyor...")
-            self.fetch_partner_stats(is_auto=True)
-        except Exception as e:
-            print(f"Auto-fetch hatası: {e}")
-        finally:
-            self.after(60000, self.auto_fetch_partner) 
+        try: self.fetch_partner_stats(is_auto=True)
+        except: pass
+        # <<< DEĞİŞTİ >>> 10 saniyede 1 güncelleme
+        self.after(10000, self.auto_fetch_partner)
 
     def _on_close(self):
-        if self.timer._running:
-            self.timer.stop() 
-        
-        final_seconds = self.timer.get_current_live_seconds()
-        self.settings["today_seconds"] = final_seconds
-        self.settings["saved_date"] = date.today().isoformat()
-        
+        if self.timer._running: self.timer.stop()
+        self.settings["today_seconds"] = self.timer.get_current_live_seconds()
         self.publish_stats()
         save_settings(self.settings)
-
         time.sleep(0.5)
-
-        # <<< DEĞİŞTİ >>> Kapanışta ambient_player.stop() çağrısı kaldırıldı.
         self.destroy()
 
-# Entry
 if __name__ == "__main__":
     app = FourBBXYApp()
     app.mainloop()
