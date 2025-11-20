@@ -1,4 +1,4 @@
-# 4bbxy - V4.0 (YKS Counter & Custom WAV Fix)
+# 4bbxy - V5.2 (Compact Mini Mode Fix & To-Do Removed)
 # Requirements: pip install customtkinter requests
 
 import os
@@ -6,9 +6,15 @@ import json
 import threading
 import time
 import random
-from datetime import date, datetime # datetime eklendi
+from datetime import date, datetime, timedelta
 import requests
-import winsound
+
+# --- WINSOUND GÜVENLİ İMPORT ---
+try:
+    import winsound
+    WINSOUND_AVAILABLE = True
+except ImportError:
+    WINSOUND_AVAILABLE = False
 
 try:
     import customtkinter as ctk
@@ -18,9 +24,6 @@ except ImportError:
 # -------------------------
 SETTINGS_FILE = "4bbxy_settings.json"
 APP_NAME = "4bbxy"
-
-# --- YKS HEDEF TARİHİ (YIL-AY-GÜN SAAT:DAKİKA:SANİYE) ---
-# Resmi tarih açıklandığında burayı güncelleyebilirsin.
 YKS_DATE_STR = "2026-06-20 10:15:00" 
 
 # --- TEMALAR ---
@@ -41,6 +44,13 @@ DEFAULT_SETTINGS = {
     "total_hearts_ever": 0, 
     "last_heart_date": None,
     
+    # Streak (Zincir) Sistemi
+    "streak_count": 0,
+    "last_streak_date": "", 
+    
+    # Ayarlar
+    "always_on_top": False,
+
     # Sync URLs
     "share_publish_url": "",
     "partner_fetch_url": "",
@@ -71,11 +81,23 @@ def load_settings():
                     s[k] = v
             
             saved_date = s.get("saved_date")
-            if saved_date != date.today().isoformat():
+            today_str = date.today().isoformat()
+            
+            if saved_date != today_str:
                 s["today_seconds"] = 0
-                s["saved_date"] = date.today().isoformat()
+                s["saved_date"] = today_str
                 s["partner_today_seconds"] = 0
                 s["hearts_earned_today_count"] = 0
+                
+                last_s_date = s.get("last_streak_date", "")
+                if last_s_date:
+                    try:
+                        last_dt = date.fromisoformat(last_s_date)
+                        delta = (date.today() - last_dt).days
+                        if delta > 1:
+                            s["streak_count"] = 0
+                    except: pass
+                
                 save_settings(s)
             return s
         except:
@@ -136,11 +158,12 @@ class FourBBXYApp(ctk.CTk):
         super().__init__()
         self.settings = load_settings()
         
-        # Tema Yükleme
         self.current_theme = THEMES.get(self.settings.get("theme_name"), THEMES["Varsayılan (Mavi)"])
         
         ctk.set_appearance_mode("Light")
         self.title(APP_NAME)
+        
+        # Başlangıç Boyutları
         self.geometry("800x600")
         self.minsize(750, 500)
         
@@ -149,8 +172,11 @@ class FourBBXYApp(ctk.CTk):
 
         self.configure(fg_color=self.current_theme["bg"])
 
-        # --- TABS ---
-        self.tabview = ctk.CTkTabview(self, width=760, height=500, fg_color=self.current_theme["card"],
+        if self.settings.get("always_on_top", False):
+            self.attributes("-topmost", True)
+
+        # --- UI ---
+        self.tabview = ctk.CTkTabview(self, width=760, height=550, fg_color=self.current_theme["card"],
                                       segmented_button_fg_color=self.current_theme["bg"],
                                       segmented_button_unselected_color=self.current_theme["bg"],
                                       text_color=self.current_theme["text"])
@@ -158,67 +184,125 @@ class FourBBXYApp(ctk.CTk):
         
         self.tab_home = self.tabview.add("Ana Sayfa")
         self.tab_shop = self.tabview.add("Yarışma & Market")
-        self.tab_yks  = self.tabview.add("YKS") # YENİ TAB EKLENDİ
+        self.tab_yks  = self.tabview.add("YKS")
         self.tab_settings = self.tabview.add("Ayarlar")
 
         self.tabview.configure(segmented_button_selected_color=self.current_theme["btn"])
         self.tabview.configure(segmented_button_selected_hover_color=self.current_theme["btn_hover"])
 
+        # Mini Mode Frame (Başlangıçta gizli)
+        self.mini_frame = ctk.CTkFrame(self, fg_color=self.current_theme["bg"])
+        self.setup_mini_mode_ui()
+
         self.setup_home_tab()
         self.setup_shop_tab()
-        self.setup_yks_tab() # YENİ FONKSİYON
+        self.setup_yks_tab()
         self.setup_settings_tab()
 
         self.timer = StudyTimer(initial_seconds=self.settings.get("today_seconds", 0), on_tick_callback=self._on_tick)
         self._update_time_display(self.settings.get("today_seconds", 0))
         self._update_progress_bars(self.settings.get("today_seconds", 0))
+        self.update_streak_display()
 
         self.auto_fetch_partner()
         self.auto_publish()
-        self.update_yks_countdown() # Geri sayımı başlat
+        self.update_yks_countdown()
         
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ---------------------------------------------------------
+    # MINI MODE UI (COMPACT)
+    # ---------------------------------------------------------
+    def setup_mini_mode_ui(self):
+        # İçerik ortalansın
+        container = ctk.CTkFrame(self.mini_frame, fg_color="transparent")
+        container.pack(expand=True)
+
+        self.mini_time_var = ctk.StringVar(value="00:00:00")
+        self.lbl_mini_timer = ctk.CTkLabel(container, textvariable=self.mini_time_var, 
+                                           font=ctk.CTkFont(size=32, weight="bold"), text_color=self.current_theme["text"])
+        self.lbl_mini_timer.pack(pady=(5, 5))
+        
+        btn_frame = ctk.CTkFrame(container, fg_color="transparent")
+        btn_frame.pack(pady=2)
+        
+        self.mini_stop_btn = ctk.CTkButton(btn_frame, text="⏸", width=30, height=25, fg_color="#E74C3C", command=self.stop_timer)
+        self.mini_stop_btn.grid(row=0, column=0, padx=2)
+        
+        self.mini_start_btn = ctk.CTkButton(btn_frame, text="▶", width=30, height=25, fg_color=self.current_theme["btn"], command=self.start_timer)
+        self.mini_start_btn.grid(row=0, column=1, padx=2)
+        
+        ctk.CTkButton(container, text="Genişlet ⤢", width=80, height=20, fg_color="gray", font=ctk.CTkFont(size=10),
+                      command=self.toggle_mini_mode).pack(pady=5)
+
+    def toggle_mini_mode(self):
+        if self.tabview.winfo_ismapped():
+            # --- MINI MODA GEÇİŞ ---
+            self.tabview.pack_forget()
+            
+            # Pencereyi küçültmek için önce minsize kısıtlamasını kırıyoruz
+            self.minsize(200, 120) 
+            self.geometry("220x130") # Çok daha kompakt bir boyut
+            
+            self.mini_frame.pack(fill="both", expand=True)
+            self.attributes("-topmost", True) 
+        else:
+            # --- NORMAL MODA GEÇİŞ ---
+            self.mini_frame.pack_forget()
+            
+            # Normal boyut kısıtlamalarını geri yükle
+            self.minsize(750, 500)
+            self.geometry("800x600")
+            
+            self.tabview.pack(padx=20, pady=20, fill="both", expand=True)
+            self.attributes("-topmost", self.settings.get("always_on_top", False))
 
     # ---------------------------------------------------------
     # TAB 1: ANA SAYFA
     # ---------------------------------------------------------
     def setup_home_tab(self):
         top_frame = ctk.CTkFrame(self.tab_home, fg_color="transparent")
-        top_frame.pack(fill="x", padx=10, pady=10)
-
+        top_frame.pack(fill="x", padx=10, pady=5)
+        
+        left_top = ctk.CTkFrame(top_frame, fg_color="transparent")
+        left_top.pack(side="left", fill="x", expand=True)
+        
         self.my_note_var = ctk.StringVar(value=self.settings.get("my_note"))
-        self.my_note_entry = ctk.CTkEntry(top_frame, textvariable=self.my_note_var, font=ctk.CTkFont(size=14), 
+        self.my_note_entry = ctk.CTkEntry(left_top, textvariable=self.my_note_var, font=ctk.CTkFont(size=14), 
                                           fg_color="white", text_color="black", border_color=self.current_theme["accent"])
-        self.my_note_entry.pack(fill="x", pady=(0,5))
+        self.my_note_entry.pack(fill="x", pady=(0,2))
         self.my_note_entry.bind("<Return>", self.save_note_and_publish)
         self.my_note_entry.bind("<FocusIn>", self.clear_placeholder)
-
-        self.partner_note_label = ctk.CTkLabel(top_frame, text="Partner: " + str(self.settings.get("partner_note")),
+        
+        self.partner_note_label = ctk.CTkLabel(left_top, text="Partner: " + str(self.settings.get("partner_note")),
                                      font=ctk.CTkFont(size=12, slant="italic"), text_color=self.current_theme["text"], anchor="w")
         self.partner_note_label.pack(fill="x")
 
+        self.streak_label = ctk.CTkLabel(top_frame, text="🔥 0 Gün", font=ctk.CTkFont(size=16, weight="bold"), text_color="#E67E22")
+        self.streak_label.pack(side="right", padx=10)
+
         mid_frame = ctk.CTkFrame(self.tab_home, fg_color="white", corner_radius=15)
-        mid_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        mid_frame.pack(fill="both", expand=True, padx=10, pady=20) # expand=True ile ortaladık
 
         self.time_var = ctk.StringVar(value="00:00:00")
-        self.lbl_timer = ctk.CTkLabel(mid_frame, textvariable=self.time_var, font=ctk.CTkFont(size=60, weight="bold"), text_color=self.current_theme["text"])
-        self.lbl_timer.pack(pady=(30, 10))
+        self.lbl_timer = ctk.CTkLabel(mid_frame, textvariable=self.time_var, font=ctk.CTkFont(size=70, weight="bold"), text_color=self.current_theme["text"])
+        self.lbl_timer.pack(pady=(40, 20))
 
         btn_frame = ctk.CTkFrame(mid_frame, fg_color="transparent")
         btn_frame.pack(pady=10)
         
-        self.start_btn = ctk.CTkButton(btn_frame, text="BAŞLA", width=140, height=40, 
+        self.start_btn = ctk.CTkButton(btn_frame, text="BAŞLA", width=140, height=45, 
                                      fg_color=self.current_theme["btn"], hover_color=self.current_theme["btn_hover"],
                                      command=self.start_timer)
         self.start_btn.grid(row=0, column=0, padx=10)
         
-        self.stop_btn = ctk.CTkButton(btn_frame, text="DURAKLAT", width=140, height=40, state="disabled",
+        self.stop_btn = ctk.CTkButton(btn_frame, text="DURAKLAT", width=140, height=45, state="disabled",
                                      fg_color="#E74C3C", hover_color="#C0392B",
                                      command=self.stop_timer)
         self.stop_btn.grid(row=0, column=1, padx=10)
 
         progress_container = ctk.CTkFrame(mid_frame, fg_color="transparent")
-        progress_container.pack(fill="x", padx=20, pady=30)
+        progress_container.pack(fill="x", padx=20, pady=40)
 
         left_prog = ctk.CTkFrame(progress_container, fg_color="transparent")
         left_prog.pack(side="left", fill="x", expand=True, padx=10)
@@ -291,7 +375,7 @@ class FourBBXYApp(ctk.CTk):
         ctk.CTkLabel(market_frame, text="* Her 30 dk çalışma = 1 Kalp", font=ctk.CTkFont(size=10), text_color="gray").pack(side="bottom", pady=10)
 
     # ---------------------------------------------------------
-    # TAB 3: YKS SAYACI (YENİ)
+    # TAB 3: YKS SAYACI
     # ---------------------------------------------------------
     def setup_yks_tab(self):
         yks_frame = ctk.CTkFrame(self.tab_yks, fg_color="white", corner_radius=20)
@@ -299,31 +383,25 @@ class FourBBXYApp(ctk.CTk):
         
         ctk.CTkLabel(yks_frame, text="🎓 YKS'YE KALAN SÜRE 🎓", font=ctk.CTkFont(size=24, weight="bold"), text_color=self.current_theme["text"]).pack(pady=(40, 20))
         
-        # Countdown Container
         count_container = ctk.CTkFrame(yks_frame, fg_color="transparent")
         count_container.pack(pady=20)
 
-        # Gün
         self.lbl_days = ctk.CTkLabel(count_container, text="000", font=ctk.CTkFont(size=50, weight="bold"), text_color="#E74C3C")
         self.lbl_days.grid(row=0, column=0, padx=15)
         ctk.CTkLabel(count_container, text="GÜN", font=ctk.CTkFont(size=14), text_color="gray").grid(row=1, column=0)
 
-        # Saat
         self.lbl_hours = ctk.CTkLabel(count_container, text="00", font=ctk.CTkFont(size=50, weight="bold"), text_color=self.current_theme["text"])
         self.lbl_hours.grid(row=0, column=1, padx=15)
         ctk.CTkLabel(count_container, text="SAAT", font=ctk.CTkFont(size=14), text_color="gray").grid(row=1, column=1)
         
-        # Dakika
         self.lbl_minutes = ctk.CTkLabel(count_container, text="00", font=ctk.CTkFont(size=50, weight="bold"), text_color=self.current_theme["text"])
         self.lbl_minutes.grid(row=0, column=2, padx=15)
         ctk.CTkLabel(count_container, text="DAKİKA", font=ctk.CTkFont(size=14), text_color="gray").grid(row=1, column=2)
         
-        # Saniye
         self.lbl_seconds = ctk.CTkLabel(count_container, text="00", font=ctk.CTkFont(size=50, weight="bold"), text_color=self.current_theme["btn"])
         self.lbl_seconds.grid(row=0, column=3, padx=15)
         ctk.CTkLabel(count_container, text="SANİYE", font=ctk.CTkFont(size=14), text_color="gray").grid(row=1, column=3)
         
-        # Motivational Quote
         quotes = [
             "Hayallerin uyumaktan daha tatlıysa,\nkalk ve çalışmaya başla.",
             "Başarı tesadüf değildir.",
@@ -356,12 +434,10 @@ class FourBBXYApp(ctk.CTk):
                 self.lbl_seconds.configure(text="00")
         except:
             pass
-        
-        # Her 1 saniyede bir güncelle
         self.after(1000, self.update_yks_countdown)
 
     # ---------------------------------------------------------
-    # TAB 4: AYARLAR
+    # TAB 4: AYARLAR (Mini Mod Butonu Eklendi)
     # ---------------------------------------------------------
     def setup_settings_tab(self):
         set_frame = ctk.CTkFrame(self.tab_settings, fg_color="white")
@@ -375,7 +451,23 @@ class FourBBXYApp(ctk.CTk):
         ctk.CTkEntry(target_frame, textvariable=self.target_var, width=80, justify="center").pack(side="left", padx=5)
         ctk.CTkButton(target_frame, text="Kaydet", width=80, fg_color=self.current_theme["btn"], command=self.save_target).pack(side="left", padx=5)
 
-        ctk.CTkLabel(set_frame, text="Tema Seçimi", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(30,5))
+        # --- PENCERE AYARLARI ---
+        ctk.CTkLabel(set_frame, text="Pencere Ayarları", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(20,5))
+        
+        # Always on Top
+        self.aot_switch = ctk.CTkSwitch(set_frame, text="Her Zaman Üstte Kal", command=self.toggle_always_on_top,
+                                        progress_color=self.current_theme["btn"])
+        if self.settings.get("always_on_top", False):
+            self.aot_switch.select()
+        self.aot_switch.pack(pady=5)
+
+        # Mini Mod Butonu (BURAYA TAŞINDI)
+        ctk.CTkButton(set_frame, text="MİNİ MODU AÇ", width=150, height=35, 
+                      fg_color="gray", hover_color="#555", 
+                      command=self.toggle_mini_mode).pack(pady=10)
+
+        # Tema
+        ctk.CTkLabel(set_frame, text="Tema Seçimi", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(20,5))
         self.theme_var = ctk.StringVar(value=self.settings.get("theme_name", "Varsayılan (Mavi)"))
         
         theme_menu = ctk.CTkOptionMenu(set_frame, variable=self.theme_var, values=list(THEMES.keys()),
@@ -384,6 +476,12 @@ class FourBBXYApp(ctk.CTk):
         theme_menu.pack(pady=5)
         
         ctk.CTkLabel(set_frame, text="* Tema değişikliği için uygulamayı\nyeniden başlatman gerekebilir.", text_color="gray", font=ctk.CTkFont(size=11)).pack(pady=5)
+
+    def toggle_always_on_top(self):
+        val = bool(self.aot_switch.get())
+        self.settings["always_on_top"] = val
+        self.attributes("-topmost", val)
+        save_settings(self.settings)
 
     # ---------------------------------------------------------
     # LOGIC & ACTIONS
@@ -435,6 +533,8 @@ class FourBBXYApp(ctk.CTk):
         self.timer.start()
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
+        self.mini_start_btn.configure(state="disabled")
+        self.mini_stop_btn.configure(state="normal")
 
     def stop_timer(self):
         self.timer.stop()
@@ -444,25 +544,42 @@ class FourBBXYApp(ctk.CTk):
         save_settings(self.settings)
         self._update_time_display(final_seconds)
         self._update_progress_bars(final_seconds)
+        
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
+        self.mini_start_btn.configure(state="normal")
+        self.mini_stop_btn.configure(state="disabled")
+        
         self.publish_stats()
 
     def _on_tick(self, total_seconds):
         self.after(0, lambda: self._update_time_display(total_seconds))
-        # Performans için her tickte progress bar güncelleme, sadece saniyeyi güncelle
 
     def _update_time_display(self, total_seconds):
         h = total_seconds // 3600
         m = (total_seconds % 3600) // 60
         s = total_seconds % 60
-        self.time_var.set(f"{h:02d}:{m:02d}:{s:02d}")
+        time_str = f"{h:02d}:{m:02d}:{s:02d}"
+        self.time_var.set(time_str)
+        self.mini_time_var.set(time_str)
 
     def _update_progress_bars(self, my_seconds):
         my_target = self.settings.get("daily_target_minutes", 120)
         my_ratio = min(1.0, my_seconds / (my_target * 60))
         self.progress.set(my_ratio)
         self.progress_text.configure(text=f"{int(my_seconds/60)} / {my_target} dk")
+
+        if my_seconds >= (my_target * 60):
+            today_str = date.today().isoformat()
+            last_streak = self.settings.get("last_streak_date", "")
+            if last_streak != today_str:
+                self.settings["streak_count"] = self.settings.get("streak_count", 0) + 1
+                self.settings["last_streak_date"] = today_str
+                save_settings(self.settings)
+                self.update_streak_display()
+                if WINSOUND_AVAILABLE:
+                    try: winsound.Beep(1000, 200)
+                    except: pass
 
         p_seconds = self.settings.get("partner_today_seconds", 0)
         p_target = self.settings.get("partner_daily_target_minutes", 120)
@@ -473,7 +590,6 @@ class FourBBXYApp(ctk.CTk):
         hearts_earned_today = int(my_seconds / HEART_EARN_RATE_SECONDS)
         last_saved_hearts_today = self.settings.get("hearts_earned_today_count", 0)
         
-        # Eğer gün değiştiyse
         if self.settings.get("saved_date") != date.today().isoformat():
             last_saved_hearts_today = 0
 
@@ -490,6 +606,10 @@ class FourBBXYApp(ctk.CTk):
             import tkinter.messagebox as mb
             mb.showinfo("Tebrikler!", f"{diff} Kalp kazandın! Çalışmaya devam!")
             self.publish_stats()
+    
+    def update_streak_display(self):
+        cnt = self.settings.get("streak_count", 0)
+        self.streak_label.configure(text=f"🔥 {cnt} Gün")
 
     def publish_stats(self):
         url = self.settings.get("share_publish_url")
@@ -532,7 +652,6 @@ class FourBBXYApp(ctk.CTk):
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _process_partner_data(self, data):
-        # Bu fonksiyon ana thread'de çalıştırılmalı (GUI güncellemeleri için)
         today = date.today().isoformat()
         if data.get("last_update") == today:
             self.settings["partner_today_seconds"] = data.get("today_seconds", 0)
@@ -567,8 +686,8 @@ class FourBBXYApp(ctk.CTk):
         mb.showinfo("Partnerinden Mesaj Var! ❤️", f"Partnerin {message}")
 
     def trigger_jumpscare(self):
+        if not WINSOUND_AVAILABLE: return
         sound_file = "Jumpscare Sound.wav"
-        
         if os.path.exists(sound_file):
             winsound.PlaySound(sound_file, winsound.SND_FILENAME | winsound.SND_ASYNC)
         else:
