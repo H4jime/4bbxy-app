@@ -1,4 +1,4 @@
-# 4bbxy - V5.2 (Compact Mini Mode Fix & To-Do Removed)
+# 4bbxy - V6 (Better Shiba Pixel Art, Timer & Midnight Bug Fix)
 # Requirements: pip install customtkinter requests
 
 import os
@@ -8,6 +8,7 @@ import time
 import random
 from datetime import date, datetime, timedelta
 import requests
+import math
 
 # --- WINSOUND GÜVENLİ İMPORT ---
 try:
@@ -23,7 +24,7 @@ except ImportError:
 
 # -------------------------
 SETTINGS_FILE = "4bbxy_settings.json"
-APP_NAME = "4bbxy"
+APP_NAME = "f4llxy"
 YKS_DATE_STR = "2026-06-20 10:15:00" 
 
 # --- TEMALAR ---
@@ -43,10 +44,18 @@ DEFAULT_SETTINGS = {
     "hearts": 0,            
     "total_hearts_ever": 0, 
     "last_heart_date": None,
+    "hearts_earned_today_count": 0, 
     
-    # Streak (Zincir) Sistemi
+    # Streak
     "streak_count": 0,
     "last_streak_date": "", 
+    
+    # Pet Data
+    "pet_name": "Shiba",
+    "pet_level": 1,
+    "pet_xp": 0,
+    "pet_hunger": 100, # 0-100
+    "pet_last_fed": "", 
     
     # Ayarlar
     "always_on_top": False,
@@ -80,6 +89,7 @@ def load_settings():
                 if k not in s:
                     s[k] = v
             
+            # --- GÜN DEĞİŞİMİ KONTROLÜ ---
             saved_date = s.get("saved_date")
             today_str = date.today().isoformat()
             
@@ -89,6 +99,7 @@ def load_settings():
                 s["partner_today_seconds"] = 0
                 s["hearts_earned_today_count"] = 0
                 
+                # Streak kontrol
                 last_s_date = s.get("last_streak_date", "")
                 if last_s_date:
                     try:
@@ -97,14 +108,27 @@ def load_settings():
                         if delta > 1:
                             s["streak_count"] = 0
                     except: pass
-                
-                save_settings(s)
+            
+            # Pet Hunger Check
+            if s["pet_last_fed"]:
+                try:
+                    last_fed = datetime.fromisoformat(s["pet_last_fed"])
+                    hours_diff = (datetime.now() - last_fed).total_seconds() / 3600
+                    # Her saat ~4 açlık düşsün
+                    drop = int(hours_diff * 4.2)
+                    s["pet_hunger"] = max(0, s["pet_hunger"] - drop)
+                except: pass
+            else:
+                s["pet_last_fed"] = datetime.now().isoformat()
+
+            save_settings(s)
             return s
         except:
             return DEFAULT_SETTINGS.copy()
     else:
         s = DEFAULT_SETTINGS.copy()
         s["saved_date"] = date.today().isoformat()
+        s["pet_last_fed"] = datetime.now().isoformat()
         save_settings(s)
         return s
 
@@ -119,38 +143,156 @@ def save_settings(settings):
 class StudyTimer:
     def __init__(self, initial_seconds=0, on_tick_callback=None):
         self._running = False
+        self._mode = "cronometer" # veya "countdown"
         self._start_time = None
         self._accum_seconds = initial_seconds
+        self._countdown_start_seconds = 0 
         self._thread = None
         self.on_tick = on_tick_callback
+        self.finished_callback = None
 
-    def start(self):
+    def start(self, mode="cronometer", duration=0):
         if self._running: return
         self._running = True
+        self._mode = mode
         self._start_time = time.time()
+        
+        if mode == "countdown":
+            self._countdown_start_seconds = duration
+            self._accum_seconds = 0
+        
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self):
         if not self._running: return 0
         self._running = False
-        elapsed = int(time.time() - self._start_time)
-        self._accum_seconds += elapsed
+        elapsed = 0
+        if self._mode == "cronometer":
+            elapsed = int(time.time() - self._start_time)
+            self._accum_seconds += elapsed
+        
         self._start_time = None
-        return elapsed
+        return self._accum_seconds
+
+    def reset(self):
+        self._running = False
+        self._start_time = None
+        self._accum_seconds = 0
 
     def get_current_live_seconds(self):
-        if self._running and self._start_time is not None:
-            return int(time.time() - self._start_time) + self._accum_seconds
-        return self._accum_seconds
+        if self._mode == "cronometer":
+            if self._running and self._start_time is not None:
+                return int(time.time() - self._start_time) + self._accum_seconds
+            return self._accum_seconds
+        else:
+            if self._running and self._start_time is not None:
+                elapsed = int(time.time() - self._start_time)
+                remaining = self._countdown_start_seconds - elapsed
+                return max(0, remaining)
+            return 0
 
     def _run(self):
         while self._running:
-            elapsed = int(time.time() - self._start_time) + self._accum_seconds
+            val = 0
+            if self._mode == "cronometer":
+                val = int(time.time() - self._start_time) + self._accum_seconds
+            else:
+                elapsed = int(time.time() - self._start_time)
+                val = self._countdown_start_seconds - elapsed
+                if val <= 0:
+                    val = 0
+                    if self.finished_callback:
+                        self.finished_callback()
+                    self._running = False 
+            
             if self.on_tick:
-                try: self.on_tick(elapsed)
+                try: self.on_tick(val, self._mode)
                 except: pass
-            time.sleep(1)
+            time.sleep(0.2)
+
+# -------------------------
+# <<< YENİLENMİŞ PIXEL PET ÇİZİCİ >>>
+class PixelPetDrawer:
+    def __init__(self, canvas, color="#E67E22"):
+        self.canvas = canvas
+        self.color = color # Turuncu
+        self.color_light = "#FAD7A0" # Krem/Beyaz (Göğüs için)
+        self.parts = []
+        self.x = 150
+        self.y = 150
+        self.direction = 1 # 1 right, -1 left
+    
+    def draw(self, x, y, is_sad=False):
+        self.x = x
+        self.y = y
+        self.clear()
+        
+        # Renkler (Üzgünse grileşir)
+        c1 = "#95A5A6" if is_sad else self.color # Ana renk
+        c2 = "#BDC3C7" if is_sad else self.color_light # Açık renk
+        
+        s = 5 # Pixel ölçeği
+        
+        # Yön çarpanı
+        d = self.direction
+
+        # --- GÖVDE ---
+        # Ana turuncu gövde
+        self.parts.append(self.canvas.create_rectangle(x-4*s, y, x+5*s, y+5*s, fill=c1, outline=""))
+        # Krem göğüs/karın (yöne göre kayar)
+        bx_start = x if d == 1 else x-4*s
+        self.parts.append(self.canvas.create_rectangle(bx_start, y+s, bx_start+4*s, y+5*s, fill=c2, outline=""))
+
+        # --- KAFA ---
+        hx = x + (2*s if d == 1 else -4*s)
+        hy = y - 3*s
+        # Ana kafa şekli
+        self.parts.append(self.canvas.create_rectangle(hx, hy, hx+5*s, hy+4*s, fill=c1, outline=""))
+        # Krem yanaklar/ağız kısmı
+        cx_start = hx+s if d == 1 else hx
+        self.parts.append(self.canvas.create_rectangle(cx_start, hy+2*s, cx_start+4*s, hy+4*s, fill=c2, outline=""))
+        # Krem kaşlar
+        kx1 = hx+s
+        kx2 = hx+3*s
+        self.parts.append(self.canvas.create_rectangle(kx1, hy, kx1+s, hy+s, fill=c2, outline=""))
+        self.parts.append(self.canvas.create_rectangle(kx2, hy, kx2+s, hy+s, fill=c2, outline=""))
+        
+        # --- KULAKLAR ---
+        # Sol kulak
+        self.parts.append(self.canvas.create_polygon(hx, hy, hx+s, hy-2*s, hx+2*s, hy, fill=c1))
+        # Sağ kulak
+        self.parts.append(self.canvas.create_polygon(hx+3*s, hy, hx+4*s, hy-2*s, hx+5*s, hy, fill=c1))
+
+        # --- KUYRUK (Kıvrık) ---
+        tx = x-5*s if d == 1 else x+4*s
+        ty = y-2*s
+        # Kuyruk tabanı
+        self.parts.append(self.canvas.create_rectangle(tx, ty, tx+2*s, ty+2*s, fill=c1, outline=""))
+        # Kuyruk ucu (yukarı kıvrık)
+        tx_tip = tx-s if d == 1 else tx+s
+        self.parts.append(self.canvas.create_rectangle(tx_tip, ty-2*s, tx_tip+2*s, ty, fill=c2, outline=""))
+
+        # --- AYAKLAR ---
+        # Ön ayaklar (yöne göre)
+        fx = x+3*s if d == 1 else x-4*s
+        self.parts.append(self.canvas.create_rectangle(fx, y+5*s, fx+2*s, y+7*s, fill=c1, outline=""))
+        # Arka ayaklar
+        bx = x-4*s if d == 1 else x+3*s
+        self.parts.append(self.canvas.create_rectangle(bx, y+5*s, bx+2*s, y+7*s, fill=c1, outline=""))
+
+        # --- GÖZ ve BURUN ---
+        # Göz
+        ex = hx + (3*s if d == 1 else s)
+        self.parts.append(self.canvas.create_rectangle(ex, hy+s, ex+s, hy+2*s, fill="black", outline=""))
+        # Burun
+        nx = hx + (4*s if d == 1 else 0)
+        self.parts.append(self.canvas.create_rectangle(nx, hy+2*s, nx+s, hy+3*s, fill="black", outline=""))
+
+    def clear(self):
+        for p in self.parts:
+            self.canvas.delete(p)
+        self.parts = []
 
 # -------------------------
 class FourBBXYApp(ctk.CTk):
@@ -162,10 +304,8 @@ class FourBBXYApp(ctk.CTk):
         
         ctk.set_appearance_mode("Light")
         self.title(APP_NAME)
-        
-        # Başlangıç Boyutları
-        self.geometry("800x600")
-        self.minsize(750, 500)
+        self.geometry("850x650")
+        self.minsize(800, 550)
         
         try: self.iconbitmap("icon.ico")
         except: pass
@@ -183,23 +323,26 @@ class FourBBXYApp(ctk.CTk):
         self.tabview.pack(padx=20, pady=20, fill="both", expand=True)
         
         self.tab_home = self.tabview.add("Ana Sayfa")
-        self.tab_shop = self.tabview.add("Yarışma & Market")
+        self.tab_pet  = self.tabview.add("Pet") 
+        self.tab_shop = self.tabview.add("Market")
         self.tab_yks  = self.tabview.add("YKS")
         self.tab_settings = self.tabview.add("Ayarlar")
 
         self.tabview.configure(segmented_button_selected_color=self.current_theme["btn"])
         self.tabview.configure(segmented_button_selected_hover_color=self.current_theme["btn_hover"])
 
-        # Mini Mode Frame (Başlangıçta gizli)
         self.mini_frame = ctk.CTkFrame(self, fg_color=self.current_theme["bg"])
         self.setup_mini_mode_ui()
 
         self.setup_home_tab()
+        self.setup_pet_tab() 
         self.setup_shop_tab()
         self.setup_yks_tab()
         self.setup_settings_tab()
 
         self.timer = StudyTimer(initial_seconds=self.settings.get("today_seconds", 0), on_tick_callback=self._on_tick)
+        self.timer.finished_callback = self.on_countdown_finished
+        
         self._update_time_display(self.settings.get("today_seconds", 0))
         self._update_progress_bars(self.settings.get("today_seconds", 0))
         self.update_streak_display()
@@ -208,13 +351,14 @@ class FourBBXYApp(ctk.CTk):
         self.auto_publish()
         self.update_yks_countdown()
         
+        self.animate_pet()
+        
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ---------------------------------------------------------
-    # MINI MODE UI (COMPACT)
+    # MINI MODE UI
     # ---------------------------------------------------------
     def setup_mini_mode_ui(self):
-        # İçerik ortalansın
         container = ctk.CTkFrame(self.mini_frame, fg_color="transparent")
         container.pack(expand=True)
 
@@ -237,23 +381,15 @@ class FourBBXYApp(ctk.CTk):
 
     def toggle_mini_mode(self):
         if self.tabview.winfo_ismapped():
-            # --- MINI MODA GEÇİŞ ---
             self.tabview.pack_forget()
-            
-            # Pencereyi küçültmek için önce minsize kısıtlamasını kırıyoruz
             self.minsize(200, 120) 
-            self.geometry("220x130") # Çok daha kompakt bir boyut
-            
+            self.geometry("220x130")
             self.mini_frame.pack(fill="both", expand=True)
             self.attributes("-topmost", True) 
         else:
-            # --- NORMAL MODA GEÇİŞ ---
             self.mini_frame.pack_forget()
-            
-            # Normal boyut kısıtlamalarını geri yükle
-            self.minsize(750, 500)
-            self.geometry("800x600")
-            
+            self.minsize(800, 550)
+            self.geometry("850x650")
             self.tabview.pack(padx=20, pady=20, fill="both", expand=True)
             self.attributes("-topmost", self.settings.get("always_on_top", False))
 
@@ -281,12 +417,27 @@ class FourBBXYApp(ctk.CTk):
         self.streak_label = ctk.CTkLabel(top_frame, text="🔥 0 Gün", font=ctk.CTkFont(size=16, weight="bold"), text_color="#E67E22")
         self.streak_label.pack(side="right", padx=10)
 
+        # MODE SWITCH BUTTON
+        self.mode_frame = ctk.CTkFrame(self.tab_home, fg_color="transparent")
+        self.mode_frame.pack(pady=(10,0))
+        self.is_countdown_mode = False
+        self.switch_mode_btn = ctk.CTkButton(self.mode_frame, text="Mod Değiştir: Kronometre", 
+                                             fg_color="gray", width=200, command=self.toggle_timer_mode)
+        self.switch_mode_btn.pack()
+
+        # TIME DISPLAY
         mid_frame = ctk.CTkFrame(self.tab_home, fg_color="white", corner_radius=15)
-        mid_frame.pack(fill="both", expand=True, padx=10, pady=20) # expand=True ile ortaladık
+        mid_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.time_var = ctk.StringVar(value="00:00:00")
         self.lbl_timer = ctk.CTkLabel(mid_frame, textvariable=self.time_var, font=ctk.CTkFont(size=70, weight="bold"), text_color=self.current_theme["text"])
-        self.lbl_timer.pack(pady=(40, 20))
+        self.lbl_timer.pack(pady=(30, 10))
+
+        # COUNTDOWN INPUT
+        self.countdown_input_frame = ctk.CTkFrame(mid_frame, fg_color="transparent")
+        self.countdown_entry = ctk.CTkEntry(self.countdown_input_frame, width=60, placeholder_text="Dk")
+        self.countdown_entry.pack(side="left", padx=5)
+        ctk.CTkLabel(self.countdown_input_frame, text="dakika ayarla", text_color="gray").pack(side="left")
 
         btn_frame = ctk.CTkFrame(mid_frame, fg_color="transparent")
         btn_frame.pack(pady=10)
@@ -302,7 +453,7 @@ class FourBBXYApp(ctk.CTk):
         self.stop_btn.grid(row=0, column=1, padx=10)
 
         progress_container = ctk.CTkFrame(mid_frame, fg_color="transparent")
-        progress_container.pack(fill="x", padx=20, pady=40)
+        progress_container.pack(fill="x", padx=20, pady=20)
 
         left_prog = ctk.CTkFrame(progress_container, fg_color="transparent")
         left_prog.pack(side="left", fill="x", expand=True, padx=10)
@@ -322,14 +473,124 @@ class FourBBXYApp(ctk.CTk):
         self.partner_progress_text = ctk.CTkLabel(right_prog, text="0 / 120 dk", text_color="gray")
         self.partner_progress_text.pack(anchor="w")
 
+    def toggle_timer_mode(self):
+        if self.timer._running:
+            import tkinter.messagebox as mb
+            mb.showwarning("Dur", "Mod değiştirmek için önce sayacı durdur.")
+            return
+
+        self.is_countdown_mode = not self.is_countdown_mode
+        
+        if self.is_countdown_mode:
+            self.switch_mode_btn.configure(text="Mod Değiştir: Zamanlayıcı (Timer)")
+            self.countdown_input_frame.pack(after=self.lbl_timer, pady=5)
+            self.time_var.set("00:00:00")
+        else:
+            self.switch_mode_btn.configure(text="Mod Değiştir: Kronometre")
+            self.countdown_input_frame.pack_forget()
+            self._update_time_display(self.settings.get("today_seconds", 0))
+
     # ---------------------------------------------------------
-    # TAB 2: YARIŞMA & MARKET
+    # TAB 2: PIXEL PET
+    # ---------------------------------------------------------
+    def setup_pet_tab(self):
+        self.pet_frame = ctk.CTkFrame(self.tab_pet, fg_color="white", corner_radius=15)
+        self.pet_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Info Bar
+        info_frame = ctk.CTkFrame(self.pet_frame, fg_color="transparent")
+        info_frame.pack(fill="x", padx=10, pady=10)
+        
+        self.pet_lvl_label = ctk.CTkLabel(info_frame, text=f"Lvl: {self.settings['pet_level']}", font=ctk.CTkFont(weight="bold"))
+        self.pet_lvl_label.pack(side="left", padx=10)
+        
+        self.pet_hunger_label = ctk.CTkLabel(info_frame, 
+                                           text=f"Açlık: {self.settings['pet_hunger']}%", 
+                                           font=ctk.CTkFont(weight="bold"), 
+                                           text_color="green")
+        self.pet_hunger_label.pack(side="right", padx=10)
+
+        # Canvas Area
+        self.pet_canvas = ctk.CTkCanvas(self.pet_frame, bg="#ecf0f1", width=700, height=300, highlightthickness=0)
+        self.pet_canvas.pack(pady=10)
+        
+        # Pet Drawer
+        self.pet_drawer = PixelPetDrawer(self.pet_canvas)
+        self.pet_x = 350
+        self.pet_y = 150
+        self.pet_target_x = 350
+        
+        ctrl_frame = ctk.CTkFrame(self.pet_frame, fg_color="transparent")
+        ctrl_frame.pack(pady=10)
+        
+        ctk.CTkButton(ctrl_frame, text="🍖 Besle (5 Kalp)", fg_color="#E67E22", command=self.feed_pet).pack(side="left", padx=10)
+        ctk.CTkButton(ctrl_frame, text="❤️ Sev", fg_color="#E74C3C", command=self.love_pet).pack(side="left", padx=10)
+        
+        ctk.CTkLabel(self.pet_frame, text="* Beslemezsen hareket etmeyi bırakır!", text_color="gray").pack()
+
+    def animate_pet(self):
+        is_hungry = self.settings["pet_hunger"] <= 0
+        
+        if not is_hungry:
+            if abs(self.pet_x - self.pet_target_x) < 5:
+                if random.random() < 0.05: 
+                    self.pet_target_x = random.randint(50, 650)
+            
+            if self.pet_x < self.pet_target_x:
+                self.pet_x += 2
+                self.pet_drawer.direction = 1
+            elif self.pet_x > self.pet_target_x:
+                self.pet_x -= 2
+                self.pet_drawer.direction = -1
+            
+            import math
+            self.pet_y = 150 + int(math.sin(time.time()*10) * 5)
+        
+        self.pet_drawer.draw(self.pet_x, self.pet_y, is_sad=is_hungry)
+        self.after(50, self.animate_pet)
+
+    def feed_pet(self):
+        import tkinter.messagebox as mb
+        cost = 5
+        if self.settings["hearts"] >= cost:
+            self.settings["hearts"] -= cost
+            self.settings["pet_hunger"] = min(100, self.settings["pet_hunger"] + 20)
+            self.settings["pet_xp"] += 10
+            self.settings["pet_last_fed"] = datetime.now().isoformat()
+            
+            if self.settings["pet_xp"] >= 100 * self.settings["pet_level"]:
+                self.settings["pet_level"] += 1
+                self.settings["pet_xp"] = 0
+                mb.showinfo("Level Up!", f"{self.settings['pet_name']} level atladı! Lvl {self.settings['pet_level']}")
+            
+            save_settings(self.settings)
+            self.update_pet_ui()
+            self.lbl_wallet.configure(text=f"💰 Harcanabilir Kalplerin: {self.settings['hearts']}")
+            
+            t = self.pet_canvas.create_text(self.pet_x, self.pet_y - 40, text="🍖 Yummy!", font=("Arial", 14, "bold"), fill="green")
+            self.after(1000, lambda: self.pet_canvas.delete(t))
+        else:
+            mb.showerror("Hata", "Yeterli kalbin yok! Ders çalışmalısın.")
+
+    def love_pet(self):
+        self.settings["pet_xp"] += 2
+        save_settings(self.settings)
+        t = self.pet_canvas.create_text(self.pet_x, self.pet_y - 40, text="❤️", font=("Arial", 20), fill="red")
+        self.after(800, lambda: self.pet_canvas.delete(t))
+
+    def update_pet_ui(self):
+        self.pet_lvl_label.configure(text=f"Lvl: {self.settings['pet_level']}")
+        color = "green" if self.settings['pet_hunger'] > 50 else "red"
+        self.pet_hunger_label.configure(text=f"Açlık: {self.settings['pet_hunger']}%", text_color=color)
+
+    # ---------------------------------------------------------
+    # TAB 3: MARKET & VS
     # ---------------------------------------------------------
     def setup_shop_tab(self):
         score_frame = ctk.CTkFrame(self.tab_shop, fg_color="white", corner_radius=10)
         score_frame.pack(fill="x", padx=10, pady=10)
         
-        ctk.CTkLabel(score_frame, text="🏆 Liderlik Tablosu (Toplam Kalp) 🏆", font=ctk.CTkFont(weight="bold", size=16), text_color=self.current_theme["text"]).pack(pady=10)
+        ctk.CTkLabel(score_frame, text="🏆 Liderlik Tablosu 🏆", font=ctk.CTkFont(weight="bold", size=16), text_color=self.current_theme["text"]).pack(pady=10)
         
         score_grid = ctk.CTkFrame(score_frame, fg_color="transparent")
         score_grid.pack(fill="x", padx=20, pady=(0,20))
@@ -371,11 +632,9 @@ class FourBBXYApp(ctk.CTk):
                                      hover_color=btn_hover,
                                      command=lambda c=cost, m=effect_msg: self.buy_item(c, m))
             item_btn.pack(fill="x", pady=4, padx=20)
-            
-        ctk.CTkLabel(market_frame, text="* Her 30 dk çalışma = 1 Kalp", font=ctk.CTkFont(size=10), text_color="gray").pack(side="bottom", pady=10)
 
     # ---------------------------------------------------------
-    # TAB 3: YKS SAYACI
+    # TAB 4: YKS SAYACI
     # ---------------------------------------------------------
     def setup_yks_tab(self):
         yks_frame = ctk.CTkFrame(self.tab_yks, fg_color="white", corner_radius=20)
@@ -401,16 +660,6 @@ class FourBBXYApp(ctk.CTk):
         self.lbl_seconds = ctk.CTkLabel(count_container, text="00", font=ctk.CTkFont(size=50, weight="bold"), text_color=self.current_theme["btn"])
         self.lbl_seconds.grid(row=0, column=3, padx=15)
         ctk.CTkLabel(count_container, text="SANİYE", font=ctk.CTkFont(size=14), text_color="gray").grid(row=1, column=3)
-        
-        quotes = [
-            "Hayallerin uyumaktan daha tatlıysa,\nkalk ve çalışmaya başla.",
-            "Başarı tesadüf değildir.",
-            "O üniversite kapısından içeri gireceksin!",
-            "Bugün yaptıkların yarınını belirleyecek.",
-            "Pes etmek yok, yola devam!"
-        ]
-        quote = random.choice(quotes)
-        ctk.CTkLabel(yks_frame, text=f'"{quote}"', font=ctk.CTkFont(size=16, slant="italic"), text_color="gray").pack(side="bottom", pady=40)
 
     def update_yks_countdown(self):
         try:
@@ -429,15 +678,11 @@ class FourBBXYApp(ctk.CTk):
                 self.lbl_seconds.configure(text=f"{seconds:02d}")
             else:
                 self.lbl_days.configure(text="000")
-                self.lbl_hours.configure(text="00")
-                self.lbl_minutes.configure(text="00")
-                self.lbl_seconds.configure(text="00")
-        except:
-            pass
+        except: pass
         self.after(1000, self.update_yks_countdown)
 
     # ---------------------------------------------------------
-    # TAB 4: AYARLAR (Mini Mod Butonu Eklendi)
+    # TAB 5: AYARLAR
     # ---------------------------------------------------------
     def setup_settings_tab(self):
         set_frame = ctk.CTkFrame(self.tab_settings, fg_color="white")
@@ -451,31 +696,23 @@ class FourBBXYApp(ctk.CTk):
         ctk.CTkEntry(target_frame, textvariable=self.target_var, width=80, justify="center").pack(side="left", padx=5)
         ctk.CTkButton(target_frame, text="Kaydet", width=80, fg_color=self.current_theme["btn"], command=self.save_target).pack(side="left", padx=5)
 
-        # --- PENCERE AYARLARI ---
         ctk.CTkLabel(set_frame, text="Pencere Ayarları", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(20,5))
-        
-        # Always on Top
         self.aot_switch = ctk.CTkSwitch(set_frame, text="Her Zaman Üstte Kal", command=self.toggle_always_on_top,
                                         progress_color=self.current_theme["btn"])
         if self.settings.get("always_on_top", False):
             self.aot_switch.select()
         self.aot_switch.pack(pady=5)
 
-        # Mini Mod Butonu (BURAYA TAŞINDI)
         ctk.CTkButton(set_frame, text="MİNİ MODU AÇ", width=150, height=35, 
                       fg_color="gray", hover_color="#555", 
                       command=self.toggle_mini_mode).pack(pady=10)
 
-        # Tema
         ctk.CTkLabel(set_frame, text="Tema Seçimi", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(20,5))
         self.theme_var = ctk.StringVar(value=self.settings.get("theme_name", "Varsayılan (Mavi)"))
-        
         theme_menu = ctk.CTkOptionMenu(set_frame, variable=self.theme_var, values=list(THEMES.keys()),
                                      fg_color=self.current_theme["btn"], button_color=self.current_theme["btn_hover"],
                                      command=self.change_theme)
         theme_menu.pack(pady=5)
-        
-        ctk.CTkLabel(set_frame, text="* Tema değişikliği için uygulamayı\nyeniden başlatman gerekebilir.", text_color="gray", font=ctk.CTkFont(size=11)).pack(pady=5)
 
     def toggle_always_on_top(self):
         val = bool(self.aot_switch.get())
@@ -484,7 +721,7 @@ class FourBBXYApp(ctk.CTk):
         save_settings(self.settings)
 
     # ---------------------------------------------------------
-    # LOGIC & ACTIONS
+    # LOGIC
     # ---------------------------------------------------------
     def clear_placeholder(self, event):
         if self.my_note_var.get() == "Notunu göndermek için buraya gir.":
@@ -500,9 +737,10 @@ class FourBBXYApp(ctk.CTk):
             self.settings["outgoing_action"] = message
             self.settings["outgoing_action_id"] = str(time.time())
             self.publish_stats()
+            self.update_pet_ui()
             mb.showinfo("Başarılı", f"Hediye gönderildi! ({cost} kalp harcandı)")
         else:
-            mb.showerror("Yetersiz Bakiye", "Yeterli kalbin yok! Biraz daha ders çalışmalısın.")
+            mb.showerror("Yetersiz Bakiye", "Yeterli kalbin yok!")
 
     def change_theme(self, new_theme_name):
         self.settings["theme_name"] = new_theme_name
@@ -519,9 +757,7 @@ class FourBBXYApp(ctk.CTk):
             self.settings["daily_target_minutes"] = val
             save_settings(self.settings)
             self._update_progress_bars(self.timer.get_current_live_seconds())
-            self.publish_stats()
-        except:
-            pass
+        except: pass
 
     def save_note_and_publish(self, event=None):
         self.settings["my_note"] = self.my_note_var.get()
@@ -530,30 +766,52 @@ class FourBBXYApp(ctk.CTk):
         self.my_note_entry.master.focus()
 
     def start_timer(self):
-        self.timer.start()
+        if self.is_countdown_mode:
+            try:
+                mins = int(self.countdown_entry.get())
+                if mins <= 0: return
+                self.timer.start(mode="countdown", duration=mins*60)
+            except:
+                return
+        else:
+            self.timer.start(mode="cronometer")
+        
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.mini_start_btn.configure(state="disabled")
         self.mini_stop_btn.configure(state="normal")
+        self.switch_mode_btn.configure(state="disabled") 
 
     def stop_timer(self):
         self.timer.stop()
-        final_seconds = self.timer.get_current_live_seconds()
-        self.settings["today_seconds"] = final_seconds
-        self.settings["saved_date"] = date.today().isoformat()
-        save_settings(self.settings)
-        self._update_time_display(final_seconds)
-        self._update_progress_bars(final_seconds)
         
+        if not self.is_countdown_mode:
+            final_seconds = self.timer.get_current_live_seconds()
+            self.settings["today_seconds"] = final_seconds
+            self.settings["saved_date"] = date.today().isoformat()
+            save_settings(self.settings)
+            self._update_progress_bars(final_seconds)
+            self.publish_stats()
+
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.mini_start_btn.configure(state="normal")
         self.mini_stop_btn.configure(state="disabled")
-        
-        self.publish_stats()
+        self.switch_mode_btn.configure(state="normal")
 
-    def _on_tick(self, total_seconds):
-        self.after(0, lambda: self._update_time_display(total_seconds))
+    def on_countdown_finished(self):
+        self.after(0, self._handle_alarm)
+
+    def _handle_alarm(self):
+        self.stop_timer() 
+        if WINSOUND_AVAILABLE:
+            winsound.Beep(600, 500)
+            winsound.Beep(800, 500)
+        import tkinter.messagebox as mb
+        mb.showinfo("Süre Doldu", "Zamanlayıcı bitti!")
+
+    def _on_tick(self, val, mode):
+        self.after(0, lambda: self._update_time_display(val))
 
     def _update_time_display(self, total_seconds):
         h = total_seconds // 3600
@@ -564,13 +822,25 @@ class FourBBXYApp(ctk.CTk):
         self.mini_time_var.set(time_str)
 
     def _update_progress_bars(self, my_seconds):
+        # MIDNIGHT CHECK
+        today_str = date.today().isoformat()
+        if self.settings.get("saved_date") != today_str:
+            self.settings["saved_date"] = today_str
+            self.settings["today_seconds"] = 0
+            self.settings["hearts_earned_today_count"] = 0
+            self.timer.reset()
+            my_seconds = 0
+            self.time_var.set("00:00:00")
+            save_settings(self.settings)
+            return
+
         my_target = self.settings.get("daily_target_minutes", 120)
         my_ratio = min(1.0, my_seconds / (my_target * 60))
         self.progress.set(my_ratio)
         self.progress_text.configure(text=f"{int(my_seconds/60)} / {my_target} dk")
 
+        # Streak Logic
         if my_seconds >= (my_target * 60):
-            today_str = date.today().isoformat()
             last_streak = self.settings.get("last_streak_date", "")
             if last_streak != today_str:
                 self.settings["streak_count"] = self.settings.get("streak_count", 0) + 1
@@ -581,17 +851,9 @@ class FourBBXYApp(ctk.CTk):
                     try: winsound.Beep(1000, 200)
                     except: pass
 
-        p_seconds = self.settings.get("partner_today_seconds", 0)
-        p_target = self.settings.get("partner_daily_target_minutes", 120)
-        p_ratio = min(1.0, p_seconds / (p_target * 60))
-        self.partner_progress.set(p_ratio)
-        self.partner_progress_text.configure(text=f"{int(p_seconds/60)} / {p_target} dk")
-
+        # Heart Logic
         hearts_earned_today = int(my_seconds / HEART_EARN_RATE_SECONDS)
         last_saved_hearts_today = self.settings.get("hearts_earned_today_count", 0)
-        
-        if self.settings.get("saved_date") != date.today().isoformat():
-            last_saved_hearts_today = 0
 
         if hearts_earned_today > last_saved_hearts_today:
             diff = hearts_earned_today - last_saved_hearts_today
@@ -606,6 +868,14 @@ class FourBBXYApp(ctk.CTk):
             import tkinter.messagebox as mb
             mb.showinfo("Tebrikler!", f"{diff} Kalp kazandın! Çalışmaya devam!")
             self.publish_stats()
+            self.update_pet_ui()
+
+        # Partner
+        p_seconds = self.settings.get("partner_today_seconds", 0)
+        p_target = self.settings.get("partner_daily_target_minutes", 120)
+        p_ratio = min(1.0, p_seconds / (p_target * 60))
+        self.partner_progress.set(p_ratio)
+        self.partner_progress_text.configure(text=f"{int(p_seconds/60)} / {p_target} dk")
     
     def update_streak_display(self):
         cnt = self.settings.get("streak_count", 0)
@@ -614,6 +884,9 @@ class FourBBXYApp(ctk.CTk):
     def publish_stats(self):
         url = self.settings.get("share_publish_url")
         if not url: return
+        
+        if self.is_countdown_mode: return
+
         current_seconds = self.timer.get_current_live_seconds()
         payload = {
             "today_seconds": current_seconds, 
@@ -632,7 +905,8 @@ class FourBBXYApp(ctk.CTk):
 
     def auto_publish(self):
         try:
-            if self.timer._running: self.publish_stats()
+            if self.timer._running and not self.is_countdown_mode: 
+                self.publish_stats()
         except: pass
         self.after(10000, self.auto_publish)
 
@@ -677,7 +951,9 @@ class FourBBXYApp(ctk.CTk):
                 self.show_action_popup(incoming_msg)
 
         save_settings(self.settings)
-        self._update_progress_bars(self.timer.get_current_live_seconds())
+        if not self.is_countdown_mode:
+            self._update_progress_bars(self.timer.get_current_live_seconds())
+        
         self.partner_note_label.configure(text="Partner: " + str(self.settings["partner_note"]))
         self.lbl_partner_total.configure(text=f"PARTNER: {self.settings['partner_total_hearts']}")
 
@@ -706,9 +982,14 @@ class FourBBXYApp(ctk.CTk):
         self.after(10000, self.auto_fetch_partner)
 
     def _on_close(self):
-        if self.timer._running: self.timer.stop()
-        self.settings["today_seconds"] = self.timer.get_current_live_seconds()
-        self.publish_stats()
+        if self.timer._running and not self.is_countdown_mode:
+            self.timer.stop()
+            self.settings["today_seconds"] = self.timer.get_current_live_seconds()
+            self.publish_stats()
+            save_settings(self.settings)
+        elif self.timer._running:
+            self.timer.stop()
+        
         save_settings(self.settings)
         time.sleep(0.5)
         self.destroy()
