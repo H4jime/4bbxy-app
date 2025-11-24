@@ -1,5 +1,5 @@
-# 4bbxy - V6 (Better Shiba Pixel Art, Timer & Midnight Bug Fix)
-# Requirements: pip install customtkinter requests
+# 4bbxy - V6.6 (Auto-Asset Download Added)
+# Requirements: pip install customtkinter requests pillow
 
 import os
 import json
@@ -9,6 +9,7 @@ import random
 from datetime import date, datetime, timedelta
 import requests
 import math
+from PIL import Image, ImageTk 
 
 # --- WINSOUND GÜVENLİ İMPORT ---
 try:
@@ -20,11 +21,54 @@ except ImportError:
 try:
     import customtkinter as ctk
 except ImportError:
-    raise SystemExit("Kritik Hata: 'customtkinter' kütüphanesi yüklü değil. Lütfen 'pip install customtkinter' komutunu çalıştırın.")
+    raise SystemExit("Kritik Hata: 'customtkinter' kütüphanesi yüklü değil.")
 
-# -------------------------
+# ============================================================================
+# <<< GITHUB OTO-İNDİRİCİ (ASSET MANAGER) >>>
+# Buraya dosyaları yüklediğin GitHub "Raw" klasörünün linkini yapıştır.
+# Sonunda "/" olduğundan emin ol.
+# Örnek: "https://raw.githubusercontent.com/Yusuf/4bbxy-assets/main/"
+GITHUB_BASE_URL = "https://raw.githubusercontent.com/H4jime/4bbxy-assets/main/"
+
+REQUIRED_ASSETS = [
+    "shiba_walk1.png",
+    "shiba_walk2.png",
+    "shiba_walk3.png",
+    "shiba_sleep.png",
+    "pet_bg.png",
+    "Jumpscare Sound.wav" # Eğer ses dosyası varsa onu da ekle
+]
+
+def check_and_download_assets():
+    """Eksik dosyaları GitHub'dan indirir."""
+    # Eğer base url değiştirilmediyse uyarı verip geç
+    if "SENIN_GITHUB" in GITHUB_BASE_URL:
+        print("UYARI: GitHub linki ayarlanmamış! Resimler inmeyecek.")
+        return
+
+    print("--- Dosya Kontrolü Yapılıyor ---")
+    for filename in REQUIRED_ASSETS:
+        if not os.path.exists(filename):
+            print(f"Eksik dosya indiriliyor: {filename}...")
+            url = GITHUB_BASE_URL + filename
+            try:
+                response = requests.get(url, timeout=10)
+                if response.status_code == 200:
+                    with open(filename, 'wb') as f:
+                        f.write(response.content)
+                    print(f"✔ {filename} indirildi.")
+                else:
+                    print(f"❌ {filename} GitHub'da bulunamadı (Hata: {response.status_code}).")
+            except Exception as e:
+                print(f"❌ İndirme hatası ({filename}): {e}")
+        else:
+            # print(f"✔ {filename} zaten var.") # Konsolu doldurmasın diye kapalı
+            pass
+    print("--- Kontrol Tamamlandı ---\n")
+# ============================================================================
+
 SETTINGS_FILE = "4bbxy_settings.json"
-APP_NAME = "f4llxy"
+APP_NAME = "4bbxy Focus"
 YKS_DATE_STR = "2026-06-20 10:15:00" 
 
 # --- TEMALAR ---
@@ -89,7 +133,6 @@ def load_settings():
                 if k not in s:
                     s[k] = v
             
-            # --- GÜN DEĞİŞİMİ KONTROLÜ ---
             saved_date = s.get("saved_date")
             today_str = date.today().isoformat()
             
@@ -99,7 +142,6 @@ def load_settings():
                 s["partner_today_seconds"] = 0
                 s["hearts_earned_today_count"] = 0
                 
-                # Streak kontrol
                 last_s_date = s.get("last_streak_date", "")
                 if last_s_date:
                     try:
@@ -109,12 +151,10 @@ def load_settings():
                             s["streak_count"] = 0
                     except: pass
             
-            # Pet Hunger Check
             if s["pet_last_fed"]:
                 try:
                     last_fed = datetime.fromisoformat(s["pet_last_fed"])
                     hours_diff = (datetime.now() - last_fed).total_seconds() / 3600
-                    # Her saat ~4 açlık düşsün
                     drop = int(hours_diff * 4.2)
                     s["pet_hunger"] = max(0, s["pet_hunger"] - drop)
                 except: pass
@@ -143,7 +183,7 @@ def save_settings(settings):
 class StudyTimer:
     def __init__(self, initial_seconds=0, on_tick_callback=None):
         self._running = False
-        self._mode = "cronometer" # veya "countdown"
+        self._mode = "cronometer"
         self._start_time = None
         self._accum_seconds = initial_seconds
         self._countdown_start_seconds = 0 
@@ -212,92 +252,81 @@ class StudyTimer:
             time.sleep(0.2)
 
 # -------------------------
-# <<< YENİLENMİŞ PIXEL PET ÇİZİCİ >>>
-class PixelPetDrawer:
-    def __init__(self, canvas, color="#E67E22"):
+# <<< SPRITE ANIMASYON ÇİZİCİSİ >>>
+class SpritePetDrawer:
+    def __init__(self, canvas):
         self.canvas = canvas
-        self.color = color # Turuncu
-        self.color_light = "#FAD7A0" # Krem/Beyaz (Göğüs için)
-        self.parts = []
-        self.x = 150
-        self.y = 150
-        self.direction = 1 # 1 right, -1 left
-    
-    def draw(self, x, y, is_sad=False):
-        self.x = x
-        self.y = y
-        self.clear()
+        self.current_image_id = None
+        self.sprites = {}
+        self.load_sprites()
         
-        # Renkler (Üzgünse grileşir)
-        c1 = "#95A5A6" if is_sad else self.color # Ana renk
-        c2 = "#BDC3C7" if is_sad else self.color_light # Açık renk
+    def load_sprites(self):
+        # Önce indirme işlemi yapılır
+        check_and_download_assets()
+
+        try:
+            # Yürüme Animasyonu (Sağ) - Boyutları biraz büyüttük
+            w1 = Image.open("shiba_walk1.png").resize((100, 100), Image.NEAREST)
+            w2 = Image.open("shiba_walk2.png").resize((100, 100), Image.NEAREST)
+            w3 = Image.open("shiba_walk3.png").resize((100, 100), Image.NEAREST)
+            
+            # Uyuma Animasyonu
+            sleep = Image.open("shiba_sleep.png").resize((110, 85), Image.NEAREST)
+
+            # Sağ yön için
+            self.sprites["walk_right"] = [
+                ImageTk.PhotoImage(w1),
+                ImageTk.PhotoImage(w2),
+                ImageTk.PhotoImage(w3)
+            ]
+            
+            # Sol yön için (Aynala)
+            self.sprites["walk_left"] = [
+                ImageTk.PhotoImage(w1.transpose(Image.FLIP_LEFT_RIGHT)),
+                ImageTk.PhotoImage(w2.transpose(Image.FLIP_LEFT_RIGHT)),
+                ImageTk.PhotoImage(w3.transpose(Image.FLIP_LEFT_RIGHT))
+            ]
+            
+            self.sprites["sleep"] = ImageTk.PhotoImage(sleep)
+            self.loaded = True
+            
+        except Exception as e:
+            print(f"Sprite yükleme hatası: {e}")
+            self.loaded = False
+
+    def draw(self, x, y, direction=1, is_sleeping=False, frame_index=0):
+        if not self.loaded:
+            if self.current_image_id: self.canvas.delete(self.current_image_id)
+            color = "gray" if is_sleeping else "orange"
+            self.current_image_id = self.canvas.create_oval(x, y, x+50, y+50, fill=color)
+            return
+
+        if self.current_image_id:
+            self.canvas.delete(self.current_image_id)
+
+        img_to_show = None
         
-        s = 5 # Pixel ölçeği
-        
-        # Yön çarpanı
-        d = self.direction
+        if is_sleeping:
+            img_to_show = self.sprites["sleep"]
+            y = y + 15 # Uyurken konumu düzelt
+        else:
+            key = "walk_right" if direction == 1 else "walk_left"
+            idx = frame_index % 3
+            img_to_show = self.sprites[key][idx]
 
-        # --- GÖVDE ---
-        # Ana turuncu gövde
-        self.parts.append(self.canvas.create_rectangle(x-4*s, y, x+5*s, y+5*s, fill=c1, outline=""))
-        # Krem göğüs/karın (yöne göre kayar)
-        bx_start = x if d == 1 else x-4*s
-        self.parts.append(self.canvas.create_rectangle(bx_start, y+s, bx_start+4*s, y+5*s, fill=c2, outline=""))
-
-        # --- KAFA ---
-        hx = x + (2*s if d == 1 else -4*s)
-        hy = y - 3*s
-        # Ana kafa şekli
-        self.parts.append(self.canvas.create_rectangle(hx, hy, hx+5*s, hy+4*s, fill=c1, outline=""))
-        # Krem yanaklar/ağız kısmı
-        cx_start = hx+s if d == 1 else hx
-        self.parts.append(self.canvas.create_rectangle(cx_start, hy+2*s, cx_start+4*s, hy+4*s, fill=c2, outline=""))
-        # Krem kaşlar
-        kx1 = hx+s
-        kx2 = hx+3*s
-        self.parts.append(self.canvas.create_rectangle(kx1, hy, kx1+s, hy+s, fill=c2, outline=""))
-        self.parts.append(self.canvas.create_rectangle(kx2, hy, kx2+s, hy+s, fill=c2, outline=""))
-        
-        # --- KULAKLAR ---
-        # Sol kulak
-        self.parts.append(self.canvas.create_polygon(hx, hy, hx+s, hy-2*s, hx+2*s, hy, fill=c1))
-        # Sağ kulak
-        self.parts.append(self.canvas.create_polygon(hx+3*s, hy, hx+4*s, hy-2*s, hx+5*s, hy, fill=c1))
-
-        # --- KUYRUK (Kıvrık) ---
-        tx = x-5*s if d == 1 else x+4*s
-        ty = y-2*s
-        # Kuyruk tabanı
-        self.parts.append(self.canvas.create_rectangle(tx, ty, tx+2*s, ty+2*s, fill=c1, outline=""))
-        # Kuyruk ucu (yukarı kıvrık)
-        tx_tip = tx-s if d == 1 else tx+s
-        self.parts.append(self.canvas.create_rectangle(tx_tip, ty-2*s, tx_tip+2*s, ty, fill=c2, outline=""))
-
-        # --- AYAKLAR ---
-        # Ön ayaklar (yöne göre)
-        fx = x+3*s if d == 1 else x-4*s
-        self.parts.append(self.canvas.create_rectangle(fx, y+5*s, fx+2*s, y+7*s, fill=c1, outline=""))
-        # Arka ayaklar
-        bx = x-4*s if d == 1 else x+3*s
-        self.parts.append(self.canvas.create_rectangle(bx, y+5*s, bx+2*s, y+7*s, fill=c1, outline=""))
-
-        # --- GÖZ ve BURUN ---
-        # Göz
-        ex = hx + (3*s if d == 1 else s)
-        self.parts.append(self.canvas.create_rectangle(ex, hy+s, ex+s, hy+2*s, fill="black", outline=""))
-        # Burun
-        nx = hx + (4*s if d == 1 else 0)
-        self.parts.append(self.canvas.create_rectangle(nx, hy+2*s, nx+s, hy+3*s, fill="black", outline=""))
-
-    def clear(self):
-        for p in self.parts:
-            self.canvas.delete(p)
-        self.parts = []
+        self.current_image_id = self.canvas.create_image(x, y, image=img_to_show, anchor="center")
 
 # -------------------------
 class FourBBXYApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+        
+        # Uygulama açılırken assetleri kontrol et (Önemli!)
+        # UI donmasın diye bunu ayrı thread'de yapabiliriz ama 
+        # resimler yüklenmeden arayüz gelirse hata verir. 
+        # O yüzden burada senkron bekliyoruz (ilk açılışta 1-2 sn sürebilir).
+        check_and_download_assets()
+
         self.settings = load_settings()
         
         self.current_theme = THEMES.get(self.settings.get("theme_name"), THEMES["Varsayılan (Mavi)"])
@@ -323,8 +352,8 @@ class FourBBXYApp(ctk.CTk):
         self.tabview.pack(padx=20, pady=20, fill="both", expand=True)
         
         self.tab_home = self.tabview.add("Ana Sayfa")
-        self.tab_pet  = self.tabview.add("Pet") 
-        self.tab_shop = self.tabview.add("Market")
+        self.tab_pet  = self.tabview.add("Pixel Pet 🐕") 
+        self.tab_shop = self.tabview.add("Market & VS")
         self.tab_yks  = self.tabview.add("YKS")
         self.tab_settings = self.tabview.add("Ayarlar")
 
@@ -335,7 +364,7 @@ class FourBBXYApp(ctk.CTk):
         self.setup_mini_mode_ui()
 
         self.setup_home_tab()
-        self.setup_pet_tab() 
+        self.setup_pet_tab()
         self.setup_shop_tab()
         self.setup_yks_tab()
         self.setup_settings_tab()
@@ -351,6 +380,7 @@ class FourBBXYApp(ctk.CTk):
         self.auto_publish()
         self.update_yks_countdown()
         
+        self.pet_anim_frame = 0
         self.animate_pet()
         
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -364,7 +394,7 @@ class FourBBXYApp(ctk.CTk):
 
         self.mini_time_var = ctk.StringVar(value="00:00:00")
         self.lbl_mini_timer = ctk.CTkLabel(container, textvariable=self.mini_time_var, 
-                                           font=ctk.CTkFont(size=32, weight="bold"), text_color=self.current_theme["text"])
+                                            font=ctk.CTkFont(size=32, weight="bold"), text_color=self.current_theme["text"])
         self.lbl_mini_timer.pack(pady=(5, 5))
         
         btn_frame = ctk.CTkFrame(container, fg_color="transparent")
@@ -411,13 +441,12 @@ class FourBBXYApp(ctk.CTk):
         self.my_note_entry.bind("<FocusIn>", self.clear_placeholder)
         
         self.partner_note_label = ctk.CTkLabel(left_top, text="Partner: " + str(self.settings.get("partner_note")),
-                                     font=ctk.CTkFont(size=12, slant="italic"), text_color=self.current_theme["text"], anchor="w")
+                                             font=ctk.CTkFont(size=12, slant="italic"), text_color=self.current_theme["text"], anchor="w")
         self.partner_note_label.pack(fill="x")
 
         self.streak_label = ctk.CTkLabel(top_frame, text="🔥 0 Gün", font=ctk.CTkFont(size=16, weight="bold"), text_color="#E67E22")
         self.streak_label.pack(side="right", padx=10)
 
-        # MODE SWITCH BUTTON
         self.mode_frame = ctk.CTkFrame(self.tab_home, fg_color="transparent")
         self.mode_frame.pack(pady=(10,0))
         self.is_countdown_mode = False
@@ -425,7 +454,6 @@ class FourBBXYApp(ctk.CTk):
                                              fg_color="gray", width=200, command=self.toggle_timer_mode)
         self.switch_mode_btn.pack()
 
-        # TIME DISPLAY
         mid_frame = ctk.CTkFrame(self.tab_home, fg_color="white", corner_radius=15)
         mid_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -433,7 +461,6 @@ class FourBBXYApp(ctk.CTk):
         self.lbl_timer = ctk.CTkLabel(mid_frame, textvariable=self.time_var, font=ctk.CTkFont(size=70, weight="bold"), text_color=self.current_theme["text"])
         self.lbl_timer.pack(pady=(30, 10))
 
-        # COUNTDOWN INPUT
         self.countdown_input_frame = ctk.CTkFrame(mid_frame, fg_color="transparent")
         self.countdown_entry = ctk.CTkEntry(self.countdown_input_frame, width=60, placeholder_text="Dk")
         self.countdown_entry.pack(side="left", padx=5)
@@ -443,13 +470,13 @@ class FourBBXYApp(ctk.CTk):
         btn_frame.pack(pady=10)
         
         self.start_btn = ctk.CTkButton(btn_frame, text="BAŞLA", width=140, height=45, 
-                                     fg_color=self.current_theme["btn"], hover_color=self.current_theme["btn_hover"],
-                                     command=self.start_timer)
+                                       fg_color=self.current_theme["btn"], hover_color=self.current_theme["btn_hover"],
+                                       command=self.start_timer)
         self.start_btn.grid(row=0, column=0, padx=10)
         
         self.stop_btn = ctk.CTkButton(btn_frame, text="DURAKLAT", width=140, height=45, state="disabled",
-                                     fg_color="#E74C3C", hover_color="#C0392B",
-                                     command=self.stop_timer)
+                                      fg_color="#E74C3C", hover_color="#C0392B",
+                                      command=self.stop_timer)
         self.stop_btn.grid(row=0, column=1, padx=10)
 
         progress_container = ctk.CTkFrame(mid_frame, fg_color="transparent")
@@ -491,34 +518,58 @@ class FourBBXYApp(ctk.CTk):
             self._update_time_display(self.settings.get("today_seconds", 0))
 
     # ---------------------------------------------------------
-    # TAB 2: PIXEL PET
+    # TAB 2: PIXEL PET (MODERN UI & SPRITES)
     # ---------------------------------------------------------
     def setup_pet_tab(self):
+        self.pet_bg_photo = None
+        # Burada resim zaten inmiş olacak
+        try:
+            if os.path.exists("pet_bg.png"):
+                bg_img_data = Image.open("pet_bg.png")
+                bg_img_data = bg_img_data.resize((700, 350), Image.NEAREST)
+                self.pet_bg_photo = ImageTk.PhotoImage(bg_img_data)
+        except: print("Arka plan resmi yüklenemedi.")
+
         self.pet_frame = ctk.CTkFrame(self.tab_pet, fg_color="white", corner_radius=15)
         self.pet_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        # Info Bar
-        info_frame = ctk.CTkFrame(self.pet_frame, fg_color="transparent")
-        info_frame.pack(fill="x", padx=10, pady=10)
+        # --- MODERN HEADER (Badges) ---
+        header_frame = ctk.CTkFrame(self.pet_frame, fg_color=self.current_theme["card"], corner_radius=10)
+        header_frame.pack(fill="x", padx=10, pady=10)
+
+        # Level Badge (Altın/Turuncu)
+        lvl_frame = ctk.CTkFrame(header_frame, fg_color="#F39C12", corner_radius=8)
+        lvl_frame.pack(side="left", padx=10, pady=5)
+        self.pet_lvl_label = ctk.CTkLabel(lvl_frame, text=f"⭐ Lvl: {self.settings['pet_level']}", 
+                                          font=ctk.CTkFont(size=14, weight="bold"), text_color="white")
+        self.pet_lvl_label.pack(padx=10, pady=5)
         
-        self.pet_lvl_label = ctk.CTkLabel(info_frame, text=f"Lvl: {self.settings['pet_level']}", font=ctk.CTkFont(weight="bold"))
-        self.pet_lvl_label.pack(side="left", padx=10)
-        
-        self.pet_hunger_label = ctk.CTkLabel(info_frame, 
-                                           text=f"Açlık: {self.settings['pet_hunger']}%", 
-                                           font=ctk.CTkFont(weight="bold"), 
-                                           text_color="green")
-        self.pet_hunger_label.pack(side="right", padx=10)
+        # Hunger Badge (Dinamik Renk)
+        hunger_color = "#2ECC71" # Yeşil (Başlangıç)
+        if self.settings['pet_hunger'] <= 20: hunger_color = "#E74C3C" # Kırmızı
+        elif self.settings['pet_hunger'] <= 50: hunger_color = "#E67E22" # Turuncu
+
+        self.hunger_frame = ctk.CTkFrame(header_frame, fg_color=hunger_color, corner_radius=8)
+        self.hunger_frame.pack(side="right", padx=10, pady=5)
+        self.pet_hunger_label = ctk.CTkLabel(self.hunger_frame, 
+                                             text=f"🍖 Açlık: {self.settings['pet_hunger']}%", 
+                                             font=ctk.CTkFont(size=14, weight="bold"), 
+                                             text_color="white")
+        self.pet_hunger_label.pack(padx=10, pady=5)
 
         # Canvas Area
-        self.pet_canvas = ctk.CTkCanvas(self.pet_frame, bg="#ecf0f1", width=700, height=300, highlightthickness=0)
+        canvas_bg = "#ecf0f1" if self.pet_bg_photo is None else "#FFC0CB"
+        self.pet_canvas = ctk.CTkCanvas(self.pet_frame, bg=canvas_bg, width=700, height=350, highlightthickness=0)
         self.pet_canvas.pack(pady=10)
+
+        if self.pet_bg_photo:
+            self.pet_canvas.create_image(0, 0, image=self.pet_bg_photo, anchor="nw")
         
-        # Pet Drawer
-        self.pet_drawer = PixelPetDrawer(self.pet_canvas)
+        self.pet_drawer = SpritePetDrawer(self.pet_canvas)
         self.pet_x = 350
-        self.pet_y = 150
+        self.pet_y = 210 
         self.pet_target_x = 350
+        self.pet_direction = 1
         
         ctrl_frame = ctk.CTkFrame(self.pet_frame, fg_color="transparent")
         ctrl_frame.pack(pady=10)
@@ -526,28 +577,33 @@ class FourBBXYApp(ctk.CTk):
         ctk.CTkButton(ctrl_frame, text="🍖 Besle (5 Kalp)", fg_color="#E67E22", command=self.feed_pet).pack(side="left", padx=10)
         ctk.CTkButton(ctrl_frame, text="❤️ Sev", fg_color="#E74C3C", command=self.love_pet).pack(side="left", padx=10)
         
-        ctk.CTkLabel(self.pet_frame, text="* Beslemezsen hareket etmeyi bırakır!", text_color="gray").pack()
+        ctk.CTkLabel(self.pet_frame, text="* Beslemezsen uyumaya başlar!", text_color="gray").pack()
 
     def animate_pet(self):
-        is_hungry = self.settings["pet_hunger"] <= 0
+        is_sleeping = self.settings["pet_hunger"] <= 0
         
-        if not is_hungry:
+        if not is_sleeping:
             if abs(self.pet_x - self.pet_target_x) < 5:
                 if random.random() < 0.05: 
-                    self.pet_target_x = random.randint(50, 650)
+                    self.pet_target_x = random.randint(100, 600)
             
             if self.pet_x < self.pet_target_x:
-                self.pet_x += 2
-                self.pet_drawer.direction = 1
+                self.pet_x += 3
+                self.pet_direction = 1
+                self.pet_anim_frame += 1
             elif self.pet_x > self.pet_target_x:
-                self.pet_x -= 2
-                self.pet_drawer.direction = -1
-            
-            import math
-            self.pet_y = 150 + int(math.sin(time.time()*10) * 5)
+                self.pet_x -= 3
+                self.pet_direction = -1
+                self.pet_anim_frame += 1
+            else:
+                self.pet_anim_frame = 0 
         
-        self.pet_drawer.draw(self.pet_x, self.pet_y, is_sad=is_hungry)
-        self.after(50, self.animate_pet)
+        self.pet_drawer.draw(self.pet_x, self.pet_y, 
+                             direction=self.pet_direction, 
+                             is_sleeping=is_sleeping, 
+                             frame_index=int(self.pet_anim_frame / 3))
+        
+        self.after(100, self.animate_pet)
 
     def feed_pet(self):
         import tkinter.messagebox as mb
@@ -567,7 +623,7 @@ class FourBBXYApp(ctk.CTk):
             self.update_pet_ui()
             self.lbl_wallet.configure(text=f"💰 Harcanabilir Kalplerin: {self.settings['hearts']}")
             
-            t = self.pet_canvas.create_text(self.pet_x, self.pet_y - 40, text="🍖 Yummy!", font=("Arial", 14, "bold"), fill="green")
+            t = self.pet_canvas.create_text(self.pet_x, self.pet_y - 50, text="🍖 Yummy!", font=("Arial", 14, "bold"), fill="#2ECC71")
             self.after(1000, lambda: self.pet_canvas.delete(t))
         else:
             mb.showerror("Hata", "Yeterli kalbin yok! Ders çalışmalısın.")
@@ -575,13 +631,19 @@ class FourBBXYApp(ctk.CTk):
     def love_pet(self):
         self.settings["pet_xp"] += 2
         save_settings(self.settings)
-        t = self.pet_canvas.create_text(self.pet_x, self.pet_y - 40, text="❤️", font=("Arial", 20), fill="red")
+        t = self.pet_canvas.create_text(self.pet_x, self.pet_y - 50, text="❤️", font=("Arial", 20), fill="#E74C3C")
         self.after(800, lambda: self.pet_canvas.delete(t))
 
     def update_pet_ui(self):
-        self.pet_lvl_label.configure(text=f"Lvl: {self.settings['pet_level']}")
-        color = "green" if self.settings['pet_hunger'] > 50 else "red"
-        self.pet_hunger_label.configure(text=f"Açlık: {self.settings['pet_hunger']}%", text_color=color)
+        self.pet_lvl_label.configure(text=f"⭐ Lvl: {self.settings['pet_level']}")
+        
+        hunger = self.settings['pet_hunger']
+        hunger_color = "#2ECC71" # Yeşil
+        if hunger <= 20: hunger_color = "#E74C3C" # Kırmızı
+        elif hunger <= 50: hunger_color = "#E67E22" # Turuncu
+        
+        self.hunger_frame.configure(fg_color=hunger_color)
+        self.pet_hunger_label.configure(text=f"🍖 Açlık: {hunger}%")
 
     # ---------------------------------------------------------
     # TAB 3: MARKET & VS
@@ -697,6 +759,7 @@ class FourBBXYApp(ctk.CTk):
         ctk.CTkButton(target_frame, text="Kaydet", width=80, fg_color=self.current_theme["btn"], command=self.save_target).pack(side="left", padx=5)
 
         ctk.CTkLabel(set_frame, text="Pencere Ayarları", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(20,5))
+        # DÜZELTİLDİ: on_color parametresi progress_color olarak değiştirildi
         self.aot_switch = ctk.CTkSwitch(set_frame, text="Her Zaman Üstte Kal", command=self.toggle_always_on_top,
                                         progress_color=self.current_theme["btn"])
         if self.settings.get("always_on_top", False):
@@ -710,8 +773,8 @@ class FourBBXYApp(ctk.CTk):
         ctk.CTkLabel(set_frame, text="Tema Seçimi", font=ctk.CTkFont(weight="bold"), text_color=self.current_theme["text"]).pack(pady=(20,5))
         self.theme_var = ctk.StringVar(value=self.settings.get("theme_name", "Varsayılan (Mavi)"))
         theme_menu = ctk.CTkOptionMenu(set_frame, variable=self.theme_var, values=list(THEMES.keys()),
-                                     fg_color=self.current_theme["btn"], button_color=self.current_theme["btn_hover"],
-                                     command=self.change_theme)
+                                       fg_color=self.current_theme["btn"], button_color=self.current_theme["btn_hover"],
+                                       command=self.change_theme)
         theme_menu.pack(pady=5)
 
     def toggle_always_on_top(self):
