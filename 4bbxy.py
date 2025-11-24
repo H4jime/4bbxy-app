@@ -1,17 +1,37 @@
-# 4bbxy - V6.6 (Auto-Asset Download Added)
-# Requirements: pip install customtkinter requests pillow
-
+# 4bbxy - V6.7 (Auto-Dependency Installer Added)
 import os
-import json
+import sys
+import subprocess
 import threading
 import time
 import random
-from datetime import date, datetime, timedelta
+import json
+from datetime import date, datetime
+
+# --- OTO KÜTÜPHANE YÜKLEYİCİ (Kız Arkadaşın İçin) ---
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+required_modules = {
+    "customtkinter": "customtkinter",
+    "requests": "requests",
+    "PIL": "pillow"  # PIL modülü için 'pillow' yüklenmeli
+}
+
+for module, package_name in required_modules.items():
+    try:
+        __import__(module)
+    except ImportError:
+        print(f"{module} bulunamadı, otomatik yükleniyor: {package_name}...")
+        install(package_name)
+        print("Yükleme tamamlandı.")
+
+# --- ARTIK GÜVENLE IMPORT EDEBİLİRİZ ---
 import requests
-import math
+import customtkinter as ctk
 from PIL import Image, ImageTk 
 
-# --- WINSOUND GÜVENLİ İMPORT ---
+# --- WINSOUND KONTROL ---
 try:
     import winsound
     WINSOUND_AVAILABLE = True
