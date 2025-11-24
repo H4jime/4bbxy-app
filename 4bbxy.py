@@ -27,7 +27,7 @@ except ImportError:
 # ============================================================================
 # Launcher kodu indirdi, ama kod çalışınca resimlere ihtiyaç duyacak.
 # Burası senin GitHub hesabına göre ayarlandı.
-GITHUB_BASE_URL = "https://raw.githubusercontent.com/H4jime/4bbxy-app/refs/heads/main/"
+GITHUB_BASE_URL = "https://raw.githubusercontent.com/H4jime/4bbxy-assets/refs/heads/main/"
 
 REQUIRED_ASSETS = [
     "shiba_walk1.png", "shiba_walk2.png", "shiba_walk3.png", 
@@ -818,3 +818,4 @@ class FourBBXYApp(ctk.CTk):
 if __name__ == "__main__":
     app = FourBBXYApp()
     app.mainloop()
+
