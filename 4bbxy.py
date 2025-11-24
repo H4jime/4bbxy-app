@@ -1,28 +1,64 @@
-# 4bbxy - V6.9 (Fixed Infinite Loop & GitHub Asset Downloader)
+# 4bbxy - V7.0 (Smart Auto-Installer & Asset Manager)
 import os
 import sys
+import subprocess
 import threading
 import time
 import random
 import json
 from datetime import date, datetime
 
-# --- KRİTİK DÜZELTME ---
-# Otomatik 'pip install' kısmı kaldırıldı çünkü Launcher ile çakışıp sonsuz döngü yaratıyor.
-# Lütfen kütüphaneleri (customtkinter, pillow) kendi bilgisayarında kurup projeyi öyle derle/paketle.
+# ============================================================================
+# <<< 1. AŞAMA: AKILLI KÜTÜPHANE YÜKLEYİCİ (LOOP FIX) >>>
+# Launcher sorununu çözen özel yükleme algoritması
+# ============================================================================
+def install_and_import(package_name, import_name):
+    try:
+        return __import__(import_name)
+    except ImportError:
+        try:
+            print(f"Eksik kütüphane tespit edildi: {package_name}. Yükleniyor...")
+            
+            # --- KRİTİK DÜZELTME ---
+            # Eğer programı çalıştıran dosya (sys.executable) "python.exe" değilse (yani Launcher ise),
+            # sys.executable'ı kullanmak Launcher'ı tekrar açar ve döngüye sokar.
+            # Bu yüzden direkt sistemdeki "python" komutunu çağırıyoruz.
+            
+            executable_path = sys.executable
+            is_launcher = "python" not in os.path.basename(executable_path).lower()
+            
+            if is_launcher:
+                # Launcher ise 'python' komutunu kullan
+                subprocess.check_call(["python", "-m", "pip", "install", package_name])
+            else:
+                # Normal python ise kendi yolunu kullan
+                subprocess.check_call([executable_path, "-m", "pip", "install", package_name])
+                
+            print(f"✔ {package_name} başarıyla yüklendi.")
+        except Exception as e:
+            # Hata durumunda kullanıcıya pencere açıp bilgi ver (Program çökmesin)
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showerror("Yükleme Hatası", f"{package_name} otomatik yüklenemedi.\nLütfen internet bağlantını kontrol et.\nHata: {e}")
+            except: 
+                print(f"Kritik Hata: {e}")
+            pass
+        
+        # Yüklemeden sonra tekrar import etmeyi dene
+        return __import__(import_name)
 
-try:
-    import requests
-    import customtkinter as ctk
-    from PIL import Image, ImageTk 
-except ImportError as e:
-    # Eğer kütüphane eksikse kullanıcıya bilgi verip güvenli çıkış yapalım (Döngüye girmesin)
-    import tkinter as tk
-    from tkinter import messagebox
-    root = tk.Tk()
-    root.withdraw()
-    messagebox.showerror("Eksik Dosya", f"Program çalışamadı çünkü şu kütüphane eksik: {e.name}\nLütfen geliştirici ile iletişime geç.")
-    sys.exit()
+# Kritik kütüphaneleri kontrol et
+install_and_import("pillow", "PIL") 
+install_and_import("customtkinter", "customtkinter")
+install_and_import("requests", "requests")
+
+# Kütüphaneler artık var, güvenle çağırabiliriz
+import customtkinter as ctk
+import requests
+from PIL import Image, ImageTk 
 
 # --- WINSOUND KONTROL ---
 try:
@@ -32,7 +68,7 @@ except ImportError:
     WINSOUND_AVAILABLE = False
 
 # ============================================================================
-# <<< GITHUB ASSET İNDİRİCİ (BU KISIM GÜVENLİ VE KALMALI) >>>
+# <<< 2. AŞAMA: GITHUB ASSET İNDİRİCİ >>>
 # ============================================================================
 # KENDİ GITHUB LINKINI BURAYA KOY (Sonunda / olsun)
 GITHUB_BASE_URL = "https://raw.githubusercontent.com/H4jime/4bbxy-assets/main/"
@@ -43,27 +79,23 @@ REQUIRED_ASSETS = [
 ]
 
 def check_and_download_assets():
-    # Eğer link ayarlanmamışsa indirme yapma
     if "SENIN_GITHUB" in GITHUB_BASE_URL:
         return
 
     for filename in REQUIRED_ASSETS:
         if not os.path.exists(filename):
             try:
-                # print(f"{filename} indiriliyor...") # Konsol kalabalığı olmasın diye kapalı
                 url = GITHUB_BASE_URL + filename
                 response = requests.get(url, timeout=10)
                 if response.status_code == 200:
                     with open(filename, 'wb') as f:
                         f.write(response.content)
-            except: 
-                pass
+            except: pass
 
-# Uygulama başlarken resimleri kontrol et
 check_and_download_assets()
 
 # ============================================================================
-# <<< ANA PROGRAM >>>
+# <<< 3. AŞAMA: ANA PROGRAM >>>
 # ============================================================================
 
 SETTINGS_FILE = "4bbxy_settings.json"
