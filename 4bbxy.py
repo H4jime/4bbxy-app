@@ -55,7 +55,7 @@ check_and_download_assets()
 # ============================================================================
 
 SETTINGS_FILE = "4bbxy_settings.json"
-APP_NAME = "4bbxy Focus"
+APP_NAME = "f4llxy"
 # YKS TARİHİNİ BURADAN GÜNCELLEYEBİLİRSİN
 YKS_DATE_STR = "2026-06-20 10:15:00" 
 
@@ -818,4 +818,5 @@ class FourBBXYApp(ctk.CTk):
 if __name__ == "__main__":
     app = FourBBXYApp()
     app.mainloop()
+
 
