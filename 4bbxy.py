@@ -278,8 +278,8 @@ class FourBBXYApp(ctk.CTk):
                                       text_color=self.current_theme["text"])
         self.tabview.pack(padx=20, pady=20, fill="both", expand=True)
         self.tab_home = self.tabview.add("Ana Sayfa")
-        self.tab_pet  = self.tabview.add("Pixel Pet 🐕") 
-        self.tab_shop = self.tabview.add("Market & VS")
+        self.tab_pet  = self.tabview.add("Pet") 
+        self.tab_shop = self.tabview.add("Market")
         self.tab_yks  = self.tabview.add("YKS")
         self.tab_settings = self.tabview.add("Ayarlar")
         self.tabview.configure(segmented_button_selected_color=self.current_theme["btn"])
@@ -818,5 +818,6 @@ class FourBBXYApp(ctk.CTk):
 if __name__ == "__main__":
     app = FourBBXYApp()
     app.mainloop()
+
 
 
