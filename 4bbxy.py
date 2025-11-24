@@ -1,43 +1,28 @@
-# 4bbxy - V6.8 (Auto-Installer FIXED & Asset Manager)
+# 4bbxy - V6.9 (Fixed Infinite Loop & GitHub Asset Downloader)
 import os
 import sys
-import subprocess
 import threading
 import time
 import random
 import json
 from datetime import date, datetime
 
-# ============================================================================
-# <<< 1. AŞAMA: KÜTÜPHANE KONTROL VE YÜKLEME >>>
-# Bu kısım her şeyden önce çalışmalı.
-# ============================================================================
-def install_and_import(package_name, import_name):
-    try:
-        # Modülü içe aktarmayı dene
-        return __import__(import_name)
-    except ImportError:
-        print(f"Eksik kütüphane bulundu: {package_name}. Yükleniyor...")
-        try:
-            # Sessizce yüklemeyi dene, olmazsa sesli yükle
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
-            print(f"✔ {package_name} yüklendi.")
-        except Exception as e:
-            print(f"❌ {package_name} yüklenemedi: {e}")
-            pass
-        # Yüklemeden sonra tekrar dene
-        return __import__(import_name)
+# --- KRİTİK DÜZELTME ---
+# Otomatik 'pip install' kısmı kaldırıldı çünkü Launcher ile çakışıp sonsuz döngü yaratıyor.
+# Lütfen kütüphaneleri (customtkinter, pillow) kendi bilgisayarında kurup projeyi öyle derle/paketle.
 
-# Kritik kütüphaneleri burada güvenli şekilde çağırıyoruz
-# "pillow" paketi yüklenir ama "PIL" olarak import edilir.
-install_and_import("pillow", "PIL") 
-install_and_import("customtkinter", "customtkinter")
-install_and_import("requests", "requests")
-
-# Artık kütüphaneler kesin var, şimdi rahatça import edebiliriz
-import customtkinter as ctk
-import requests
-from PIL import Image, ImageTk
+try:
+    import requests
+    import customtkinter as ctk
+    from PIL import Image, ImageTk 
+except ImportError as e:
+    # Eğer kütüphane eksikse kullanıcıya bilgi verip güvenli çıkış yapalım (Döngüye girmesin)
+    import tkinter as tk
+    from tkinter import messagebox
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror("Eksik Dosya", f"Program çalışamadı çünkü şu kütüphane eksik: {e.name}\nLütfen geliştirici ile iletişime geç.")
+    sys.exit()
 
 # --- WINSOUND KONTROL ---
 try:
@@ -47,7 +32,7 @@ except ImportError:
     WINSOUND_AVAILABLE = False
 
 # ============================================================================
-# <<< 2. AŞAMA: GITHUB ASSET İNDİRİCİ >>>
+# <<< GITHUB ASSET İNDİRİCİ (BU KISIM GÜVENLİ VE KALMALI) >>>
 # ============================================================================
 # KENDİ GITHUB LINKINI BURAYA KOY (Sonunda / olsun)
 GITHUB_BASE_URL = "https://raw.githubusercontent.com/H4jime/4bbxy-assets/main/"
@@ -58,25 +43,27 @@ REQUIRED_ASSETS = [
 ]
 
 def check_and_download_assets():
+    # Eğer link ayarlanmamışsa indirme yapma
     if "SENIN_GITHUB" in GITHUB_BASE_URL:
-        # Link ayarlanmamışsa sessizce geç
         return
 
     for filename in REQUIRED_ASSETS:
         if not os.path.exists(filename):
             try:
+                # print(f"{filename} indiriliyor...") # Konsol kalabalığı olmasın diye kapalı
                 url = GITHUB_BASE_URL + filename
                 response = requests.get(url, timeout=10)
                 if response.status_code == 200:
                     with open(filename, 'wb') as f:
                         f.write(response.content)
-            except: pass
+            except: 
+                pass
 
-# Uygulama başlarken dosyaları kontrol et
+# Uygulama başlarken resimleri kontrol et
 check_and_download_assets()
 
 # ============================================================================
-# <<< 3. AŞAMA: ANA PROGRAM >>>
+# <<< ANA PROGRAM >>>
 # ============================================================================
 
 SETTINGS_FILE = "4bbxy_settings.json"
